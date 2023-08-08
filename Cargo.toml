@@ -1,0 +1,12 @@
+[package]
+name = "pretty"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pretty"
+path = "src/lib.rs"
+
+[dependencies]
+pretty_derive = { path = "./derive", version = "0.1.0" }
+regex = "1.7.3"
