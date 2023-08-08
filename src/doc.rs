@@ -5,6 +5,9 @@ use std::{
 
 use regex::Regex;
 
+/// A document that can be pretty printed.
+/// This is the core type of the library.
+/// It is an enum that represents the different ways a document can be printed.
 #[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Doc<'a> {
     Null,
@@ -46,14 +49,19 @@ impl<'a> std::ops::Add for Doc<'a> {
     }
 }
 
+/// Group a document if it contains a line break.
+/// A group is a document that is printed on a single line if it fits the page,
+/// otherwise it is printed with line breaks.
 pub fn group<'a>(doc: impl Into<Doc<'a>>) -> Doc<'a> {
     Doc::Group(Box::new(doc.into()))
 }
 
+/// Concatenate a vector of documents into a single document.
 pub fn concat<'a>(docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
     Doc::Concat(docs.into_iter().map(|d| d.into()).collect())
 }
 
+/// Enwrap a document with two other documents, `left` and `right`.
 pub fn wrap<'a>(
     left: impl Into<Doc<'a>>,
     doc: impl Into<Doc<'a>>,
@@ -62,6 +70,7 @@ pub fn wrap<'a>(
     concat(vec![left.into(), doc.into(), right.into()])
 }
 
+/// Join a vector of documents on a separator.
 pub fn join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
     Doc::Join(
         Box::new(sep.into()),
@@ -69,6 +78,10 @@ pub fn join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'
     )
 }
 
+/// Join a vector of documents on a separator if the result fits the page,
+/// hence the name "smart join", otherwise join them on a line break.
+/// Implemented using the LaTeX algorithm described in
+/// src/utils.rs
 pub fn smart_join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
     Doc::SmartJoin(
         Box::new(sep.into()),
@@ -76,22 +89,27 @@ pub fn smart_join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) ->
     )
 }
 
+/// Indent a document by one level.
 pub fn indent<'a>(doc: impl Into<Doc<'a>>) -> Doc<'a> {
     Doc::Indent(Box::new(doc.into()))
 }
 
+/// Dedent a document by one level.
 pub fn dedent<'a>(doc: impl Into<Doc<'a>>) -> Doc<'a> {
     Doc::Dedent(Box::new(doc.into()))
 }
 
+/// An absolute line break, i.e. a line break that is always printed.
 pub fn hardline<'a>() -> Doc<'a> {
     Doc::Hardline
 }
 
+/// A line break, i.e. a line break that is only printed if the document does not fit the page.
 pub fn softline<'a>() -> Doc<'a> {
     Doc::Softline
 }
 
+/// If the first document fits the page, print it, otherwise print the second document.
 pub fn if_break<'a>(doc: Doc<'a>, other: Doc<'a>) -> Doc<'a> {
     Doc::IfBreak(Box::new(doc), Box::new(other))
 }

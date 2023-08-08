@@ -1,12 +1,9 @@
 # `pprint`
 
-A Rust library for pretty printing using a document model.
-
-## Features
-
--   Document model for representing formatted text
--   Pretty printing to string with configurable options
--   Derive macros for automatic implementation
+A Rust library for pretty ✨ printing using a document model. Automatically derive
+`Pretty` for structs, enums, and primitive types; vector and map types are also
+supported by default; very similar to the `derive(Debug)` macro, just prettier and more
+configurable.
 
 ## Usage
 
@@ -26,6 +23,8 @@ print!("{}", PRINTER.pretty(doc));
 // ]
 ```
 
+## Document Model
+
 The document model provides a rich set of building blocks:
 
 -   Primitive values like strings, numbers
@@ -42,7 +41,10 @@ The `Printer` handles pretty printing a `Doc` to a string with configurable opti
 -   `break_long_text` - insert line breaks for long text
 -   `use_tabs` - use tabs instead of spaces for indentation
 
-There are also derive macros included for easy implementation:
+## Derive Macro
+
+Half of the library's development time was spent on the derive macro, allowing for easy
+pretty printing of essentially any type. Here's a trivial example:
 
 ```rust
 #[derive(Pretty)]
@@ -52,5 +54,38 @@ struct Point {
 }
 
 let point = Point { x: 1.0, y: 2.0 };
-print!("{}", point.to_doc()); // prints "(x: 1, y: 2)"
+print!("{}", Doc::from(point)); // prints "(x: 1, y: 2)"
 ```
+
+`Pretty` supports an additional attribute, `pprint`, which is used to customize an
+object's pretty printing definition. The following options are available:
+
+-   skip: bool: Skip this field - don't include it in the output
+-   indent: bool: Indent this field - add a newline and indent before and after
+-   rename: Option<String>: Rename this field - use the given string as the field name
+-   getter: Option<String>: Use the given function to get the value of this field
+-   verbose: bool: Verbose output - include field names in output
+
+```rust
+#[derive(Pretty)]
+#[pprint(verbose)]
+struct Point {
+    #[pprint(rename = "x-coordinate")]
+    x: f64,
+    #[pprint(rename = "y-coordinate")]
+    y: f64
+    #[pprint(skip)]
+    _skip_me: bool,
+}
+
+let point = Point { x: 1.0, y: 2.0, _skip_me: true };
+print!("{}", Doc::from(point));
+// prints:
+// Point {
+//   x-coordinate: 1,
+//   y-coordinate: 2
+// }
+```
+
+Structures can be arbitrarily nested, & c. & c. More involved examples can be found in
+the [tests](tests/derive_tests.rs) file.

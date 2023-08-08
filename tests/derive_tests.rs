@@ -22,7 +22,7 @@ mod tests {
     }
 
     #[derive(Pretty)]
-    #[pprint(verbose)]
+    // #[pprint(verbose)]
     pub struct Strumct<'a> {
         a: Vec<usize>,
         b: HashMap<String, HeyEnum<'a>>,

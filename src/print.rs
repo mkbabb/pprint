@@ -73,6 +73,10 @@ pub fn smart_join_impl<'a>(
         })
 }
 
+/// Core pretty printing function.
+/// Takes a document and a printer configuration and returns a String.
+/// Uses a stack to avoid recursion, keeping track of the current line length,
+/// and indent level.
 pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
     struct PrintItem<'a> {
         doc: &'a Doc<'a>,
@@ -215,6 +219,7 @@ pub struct Printer {
     pub use_tabs: bool,
 }
 
+/// Default printer configuration.
 pub const PRINTER: Printer = Printer {
     max_width: 80,
     indent: 2,
@@ -228,6 +233,9 @@ impl Default for Printer {
     }
 }
 
+/// A builder for a printer configuration.
+/// Allows for setting the max width, indent, whether to break long text,
+/// and whether to use tabs.
 impl Printer {
     pub const fn new(
         max_width: usize,
