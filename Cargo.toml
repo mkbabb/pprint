@@ -1,6 +1,6 @@
 [package]
 name = "pprint"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "A small pretty printing library for Rust"
@@ -15,4 +15,4 @@ path = "src/lib.rs"
 
 [dependencies]
 pprint_derive = { path = "./derive", version = "0.1.0" }
-regex = "1.7.3"
+regex = "1.9.3"
