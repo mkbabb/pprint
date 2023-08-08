@@ -73,7 +73,7 @@ pub fn smart_join_impl<'a>(
         })
 }
 
-pub fn pretty_print<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
+pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
     struct PrintItem<'a> {
         doc: &'a Doc<'a>,
         indent_delta: usize,
@@ -243,21 +243,21 @@ impl Printer {
         }
     }
 
-    pub fn pretty<'a>(&self, doc: impl Into<Doc<'a>>) -> String {
-        pretty_print(&doc.into(), self)
+    pub fn pprint<'a>(&self, doc: impl Into<Doc<'a>>) -> String {
+        pprint(&doc.into(), self)
     }
 }
 
 impl std::fmt::Debug for Doc<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = PRINTER.pretty(self.clone());
+        let s = PRINTER.pprint(self.clone());
         f.write_str(&s)
     }
 }
 
 impl std::fmt::Display for Doc<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = PRINTER.pretty(self.clone());
+        let s = PRINTER.pprint(self.clone());
         f.write_str(&s)
     }
 }

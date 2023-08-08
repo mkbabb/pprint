@@ -7,5 +7,5 @@ pub use print::*;
 pub mod utils;
 pub use utils::*;
 
-extern crate pretty_derive;
-pub use pretty_derive::*;
+extern crate pprint_derive;
+pub use pprint_derive::*;

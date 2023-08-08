@@ -1,14 +1,18 @@
 [package]
-name = "pretty"
+name = "pprint"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "A small pretty printing library for Rust"
+repository = "https://github.com/mkbabb/pprint"
+readme = "README.md"
+keywords = ["pretty", "printing", "rust"]
+categories = ["text-processing", "development-tools"]
 
 [lib]
-name = "pretty"
+name = "pprint"
 path = "src/lib.rs"
 
 [dependencies]
-pretty_derive = { path = "./derive", version = "0.1.0" }
+pprint_derive = { path = "./derive", version = "0.1.0" }
 regex = "1.7.3"

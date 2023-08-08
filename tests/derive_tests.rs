@@ -1,20 +1,20 @@
 #[cfg(test)]
 mod tests {
-    use pretty::{Pretty, Printer};
+    use pprint::{Pretty, Printer};
 
     use std::collections::HashMap;
 
     #[derive(Pretty)]
-    #[pretty(verbose)]
+    #[pprint(verbose)]
     pub enum HeyEnum<'a> {
         There(&'a str),
-        #[pretty(rename = "MyEnum::A")]
+        #[pprint(rename = "MyEnum::A")]
         A,
         B(regex::Regex),
     }
 
     #[derive(Pretty)]
-    #[pretty(verbose, rename = "Inner")]
+    #[pprint(verbose, rename = "Inner")]
     pub struct InnerStrumct<'a> {
         x: &'a str,
         y: HeyEnum<'a>,
@@ -22,13 +22,13 @@ mod tests {
     }
 
     #[derive(Pretty)]
-    #[pretty(verbose)]
+    #[pprint(verbose)]
     pub struct Strumct<'a> {
         a: Vec<usize>,
         b: HashMap<String, HeyEnum<'a>>,
         c: InnerStrumct<'a>,
 
-        #[pretty(ignore)]
+        #[pprint(ignore)]
         no: usize,
     }
 
@@ -38,8 +38,8 @@ mod tests {
 
         let s = HeyEnum::There("there");
 
-        let pretty = printer.pretty(s);
-        println!("{}", pretty);
+        let pprint = printer.pprint(s);
+        println!("{}", pprint);
     }
 
     #[test]
@@ -52,8 +52,8 @@ mod tests {
             z: (1, 2),
         };
 
-        let pretty = printer.pretty(s);
-        println!("{}", pretty);
+        let pprint = printer.pprint(s);
+        println!("{}", pprint);
     }
 
     #[test]
@@ -81,7 +81,7 @@ mod tests {
             no: 0,
         };
 
-        let pretty = printer.pretty(s);
-        println!("{}", pretty);
+        let pprint = printer.pprint(s);
+        println!("{}", pprint);
     }
 }

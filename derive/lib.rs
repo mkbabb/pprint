@@ -21,13 +21,13 @@ struct PrettyAttributes {
     verbose: bool,
 }
 
-fn parse_pretty_attrs(attrs: &[Attribute]) -> PrettyAttributes {
-    let mut pretty_attr = PrettyAttributes::default();
+fn parse_pprint_attrs(attrs: &[Attribute]) -> PrettyAttributes {
+    let mut pprint_attr = PrettyAttributes::default();
 
     for meta in attrs
         .iter()
-        // Filter out attributes that aren't #[pretty(...)]
-        .filter(|attr| attr.path.is_ident("pretty"))
+        // Filter out attributes that aren't #[pprint(...)]
+        .filter(|attr| attr.path.is_ident("pprint"))
         .filter_map(|attr| match attr.parse_meta() {
             Ok(Meta::List(meta)) => Some(meta),
             _ => None,
@@ -43,35 +43,35 @@ fn parse_pretty_attrs(attrs: &[Attribute]) -> PrettyAttributes {
                 // Parse the attribute name and value
                 if nested_meta.path().is_ident("rename") {
                     if let Lit::Str(rename) = &_name_value.lit {
-                        pretty_attr.rename = Some(rename.value());
+                        pprint_attr.rename = Some(rename.value());
                     }
                 }
                 if nested_meta.path().is_ident("getter") {
                     if let Lit::Str(getter) = &_name_value.lit {
-                        pretty_attr.getter = Some(getter.value());
+                        pprint_attr.getter = Some(getter.value());
                     }
                 }
             } else {
                 // Parse the attribute name - boolean toggle
                 match nested_meta.path() {
-                    path if path.is_ident("skip") => pretty_attr.skip = true,
-                    path if path.is_ident("indent") => pretty_attr.indent = true,
-                    path if path.is_ident("verbose") => pretty_attr.verbose = true,
+                    path if path.is_ident("skip") => pprint_attr.skip = true,
+                    path if path.is_ident("indent") => pprint_attr.indent = true,
+                    path if path.is_ident("verbose") => pprint_attr.verbose = true,
                     _ => {}
                 }
             }
         }
     }
-    pretty_attr
+    pprint_attr
 }
 
-fn apply_pretty_doc_attributes(
+fn apply_pprint_doc_attributes(
     field_doc: &proc_macro2::TokenStream,
-    pretty_attr: &PrettyAttributes,
+    pprint_attr: &PrettyAttributes,
 ) -> proc_macro2::TokenStream {
     let mut doc = quote! { #field_doc };
 
-    if pretty_attr.indent {
+    if pprint_attr.indent {
         doc = quote! { (#doc).indent() };
     }
     doc
@@ -79,12 +79,12 @@ fn apply_pretty_doc_attributes(
 
 ///! Derive the Pretty trait for a struct or enum
 /// This macro will generate a From implementation for the given struct or enum.
-/// The generated From implementation will convert the struct or enum into a pretty::Doc<'a>, where the Doc lifetime
+/// The generated From implementation will convert the struct or enum into a pprint::Doc<'a>, where the Doc lifetime
 /// is either the lifetime of the struct or enum, or 'a if no lifetime is specified.
 /// Example:
 /// ```
-/// use pretty::Doc;
-/// use pretty_derive::Pretty;
+/// use pprint::Doc;
+/// use pprint_derive::Pretty;
 /// #[derive(Pretty)]
 /// struct Hey {
 ///     a: u32,
@@ -93,11 +93,11 @@ fn apply_pretty_doc_attributes(
 /// let hey = Hey { a: 1, b: 2 };
 /// let doc: Doc = hey.into();
 /// ```
-#[proc_macro_derive(Pretty, attributes(pretty))]
-pub fn pretty_derive(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Pretty, attributes(pprint))]
+pub fn pprint_derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    let pretty_container_attrs = parse_pretty_attrs(&input.attrs);
+    let pprint_container_attrs = parse_pprint_attrs(&input.attrs);
 
     let name = &input.ident;
     let generics = &input.generics;
@@ -111,10 +111,10 @@ pub fn pretty_derive(input: TokenStream) -> TokenStream {
 
     let doc_match = match &input.data {
         Data::Struct(data_struct) => {
-            generate_struct_match(name, &data_struct.fields, &pretty_container_attrs)
+            generate_struct_match(name, &data_struct.fields, &pprint_container_attrs)
         }
         Data::Enum(data_enum) => {
-            generate_enum_match(name, &data_enum.variants, &pretty_container_attrs)
+            generate_enum_match(name, &data_enum.variants, &pprint_container_attrs)
         }
         _ => panic!("Only structs and enums are supported."),
     };
@@ -139,12 +139,12 @@ pub fn pretty_derive(input: TokenStream) -> TokenStream {
 
     // Create the From implementation
     let expanded = quote! {
-        impl #impl_generics From<#name #ty_generics> for pretty::Doc<#doc_lifetime>
+        impl #impl_generics From<#name #ty_generics> for pprint::Doc<#doc_lifetime>
         where
             #new_where_clause
         {
             fn from(_self: #name #ty_generics) -> Self {
-                use pretty::{concat, indent, wrap, join, Doc, Join, Wrap, Group, Indent, Dedent};
+                use pprint::{concat, indent, wrap, join, Doc, Join, Wrap, Group, Indent, Dedent};
                 #doc_match
             }
         }
@@ -155,11 +155,11 @@ pub fn pretty_derive(input: TokenStream) -> TokenStream {
 
 fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
     let format_key_value = |field_ident: &Option<syn::Ident>, field: &Field| {
-        let pretty_attr = parse_pretty_attrs(&field.attrs);
-        if pretty_attr.skip {
+        let pprint_attr = parse_pprint_attrs(&field.attrs);
+        if pprint_attr.skip {
             return None;
         }
-        let field_name = pretty_attr.rename.clone().unwrap_or_else(|| {
+        let field_name = pprint_attr.rename.clone().unwrap_or_else(|| {
             field_ident
                 .as_ref()
                 .map(|ident| ident.to_string())
@@ -173,7 +173,7 @@ fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream
         } else {
             quote! { Doc::from(_self.#field_ident) }
         };
-        let field_doc = apply_pretty_doc_attributes(&field_doc, &pretty_attr);
+        let field_doc = apply_pprint_doc_attributes(&field_doc, &pprint_attr);
         let field_doc = quote! {
             concat(vec![
                 Doc::from(#field_name),
@@ -212,9 +212,9 @@ fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream
 fn generate_struct_match(
     ident: &syn::Ident,
     fields: &Fields,
-    pretty_container_attrs: &PrettyAttributes,
+    pprint_container_attrs: &PrettyAttributes,
 ) -> proc_macro2::TokenStream {
-    let name = pretty_container_attrs
+    let name = pprint_container_attrs
         .rename
         .clone()
         .unwrap_or_else(|| ident.to_string());
@@ -236,7 +236,7 @@ fn generate_struct_match(
             let header = quote! {
                 Doc::from(format!("{} ", #name)).group().indent()
             };
-            let doc_match = if pretty_container_attrs.verbose {
+            let doc_match = if pprint_container_attrs.verbose {
                 quote! {
                     concat(vec![#header, #body])
                 }
@@ -261,15 +261,15 @@ fn generate_struct_match(
 fn generate_variants_match(
     variant: &syn::Variant,
     constructor: &proc_macro2::TokenStream,
-    pretty_container_attrs: &PrettyAttributes,
+    pprint_container_attrs: &PrettyAttributes,
 ) -> Option<proc_macro2::TokenStream> {
-    let pretty_attr = parse_pretty_attrs(&variant.attrs);
+    let pprint_attr = parse_pprint_attrs(&variant.attrs);
 
-    if pretty_attr.skip {
+    if pprint_attr.skip {
         return None;
     }
 
-    let variant_name = pretty_attr
+    let variant_name = pprint_attr
         .rename
         .clone()
         .unwrap_or_else(|| variant.ident.to_string());
@@ -305,7 +305,7 @@ fn generate_variants_match(
     };
 
     // If the variant has a getter, we need to call it to get the value of the field
-    let field_doc = match pretty_attr.getter.clone() {
+    let field_doc = match pprint_attr.getter.clone() {
         Some(getter) => {
             let getter = syn::parse_str::<syn::Expr>(&getter).unwrap();
             quote! {
@@ -317,10 +317,10 @@ fn generate_variants_match(
     let field_doc = quote! {
         Doc::from(#field_doc)
     };
-    let field_doc = apply_pretty_doc_attributes(&field_doc, &pretty_attr);
+    let field_doc = apply_pprint_doc_attributes(&field_doc, &pprint_attr);
     // If in verbose mode, we need to wrap the field doc in a tuple,
     // but not if the variant has no fields
-    let field_doc = if pretty_container_attrs.verbose && !matches!(variant.fields, Fields::Unit) {
+    let field_doc = if pprint_container_attrs.verbose && !matches!(variant.fields, Fields::Unit) {
         quote! {
             concat(vec![
                 Doc::from(#variant_name),
@@ -356,12 +356,12 @@ fn generate_variants_match(
 fn generate_enum_match(
     name: &syn::Ident,
     variants: &syn::punctuated::Punctuated<Variant, Comma>,
-    pretty_container_attrs: &PrettyAttributes,
+    pprint_container_attrs: &PrettyAttributes,
 ) -> proc_macro2::TokenStream {
     let format_variant = |variant: &Variant| {
         let variant_ident = &variant.ident;
         let constructor = quote! { #name::#variant_ident };
-        generate_variants_match(variant, &constructor, pretty_container_attrs)
+        generate_variants_match(variant, &constructor, pprint_container_attrs)
     };
     let variants_match = variants.into_iter().filter_map(format_variant);
 

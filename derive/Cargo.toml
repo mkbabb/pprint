@@ -1,7 +1,11 @@
 [package]
-name = "pretty_derive"
+name = "pprint_derive"
 version = "0.1.0"
 edition = "2021"
+description = "A set of procedural macros for pprint"
+license = "MIT"
+repository = "https://github.com/mkbabb/pprint"
+
 
 [lib]
 path = "./lib.rs"
