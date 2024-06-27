@@ -1,6 +1,6 @@
 [package]
 name = "pprint"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "MIT"
 description = "Flexible and lightweight pretty printing library for Rust"

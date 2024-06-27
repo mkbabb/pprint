@@ -80,6 +80,7 @@ struct Point {
 
 let point = Point { x: 1.0, y: 2.0, _skip_me: true };
 print!("{}", Doc::from(point));
+
 // prints:
 // Point {
 //   x-coordinate: 1,
@@ -89,3 +90,9 @@ print!("{}", Doc::from(point));
 
 Structures can be arbitrarily nested, & c. & c. More involved examples can be found in
 the [tests](tests/derive_tests.rs) file.
+
+## About
+
+This library was partway created as a means by which to learn more about Rust's procedural macros, and partway because I just love pretty printing. It's a work in progress, but I'm fairly pleased with it hitherto. If you have any suggestions, please feel free to open an issue or a pull request.
+
+Also of note is the implementation of the `text_justify` function, which was based off the wonderful series of lectures (specifically [No. 20](https://www.youtube.com/watch?v=ENyox7kNKeY)) from MIT's 6.006 course, "Introduction to Algorithms". It's a simple and rather elegant algorithm that I've found to be quite effective in practice.
