@@ -1,6 +1,9 @@
 use std::usize;
 
-/// Text justification algorithm inspired by LaTeX's algorithm.
+/// Text justification algorithm inspired by LaTeX's text justification algorithm.
+///
+/// See: https://en.wikipedia.org/wiki/Line_wrap_and_word_wrap#Minimum_raggedness
+/// and: MIT's 6.006, lecture No.20 https://www.youtube.com/watch?v=ENyox7kNKeY
 ///
 /// This function takes a list of document lengths and a maximum line width, and returns a vector
 /// of indices that represent the end of each line in the justified text. The algorithm minimizes
@@ -16,8 +19,8 @@ use std::usize;
 /// # Returns
 ///
 /// A vector of indices that represent the end of each line in the justified text.
-pub fn text_justify(sep_length: usize, doc_lengths: &Vec<usize>, max_width: usize) -> Vec<usize> {
-    // Score struct to hold the badness and the index of the next word
+pub fn text_justify(sep_length: usize, doc_lengths: &[usize], max_width: usize) -> Vec<usize> {
+    // Score struct to hold the "badness" and the index of the next word
     #[derive(Clone, Debug)]
     struct Score {
         badness: usize,

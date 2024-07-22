@@ -2,10 +2,11 @@ use crate::doc::Doc;
 use crate::utils::text_justify;
 use std::collections::HashMap;
 
-pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a Vec<Doc<'a>>, printer: &Printer) -> usize {
+pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Printer) -> usize {
     if docs.is_empty() {
         return 0;
     }
+
     let doc_length: usize = docs.iter().map(|d| count_text_length(d, printer)).sum();
     let separator_length = count_text_length(sep, printer);
 
@@ -57,6 +58,9 @@ pub fn smart_join_impl<'a>(
     let sep_length = count_text_length(sep, printer);
     let doc_lengths: Vec<_> = docs.iter().map(|d| count_text_length(d, printer)).collect();
 
+    // align the separator with the longest doc length:
+    let sep_length = sep_length + sep_length.max(doc_lengths.iter().max().copied().unwrap_or(0));
+
     let breaks = text_justify(sep_length, &doc_lengths, max_width);
 
     docs.iter()
@@ -77,7 +81,15 @@ pub fn smart_join_impl<'a>(
 /// Takes a document and a printer configuration and returns a String.
 /// Uses a stack to avoid recursion, keeping track of the current line length,
 /// and indent level.
-pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
+pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
+   
+    
+    let doc = doc.into();
+
+    return "".into();
+
+    let printer = printer.unwrap_or_default();
+
     struct PrintItem<'a> {
         doc: &'a Doc<'a>,
         indent_delta: usize,
@@ -85,6 +97,8 @@ pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
 
     let mut output = String::new();
     let mut current_line_len = 0;
+
+    
 
     let push_hardline = |stack: &mut Vec<_>, indent_delta: usize| {
         stack.push(PrintItem {
@@ -94,9 +108,11 @@ pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
     };
 
     let mut stack = vec![PrintItem {
-        doc,
+        doc: &doc,
         indent_delta: 0,
     }];
+
+   
 
     let mut hardlines = HashMap::new();
 
@@ -119,7 +135,7 @@ pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
             }
 
             Doc::Group(d) => {
-                let needs_breaking = count_text_length(d, printer) > printer.max_width;
+                let needs_breaking = count_text_length(d, &printer) > printer.max_width;
 
                 if needs_breaking {
                     push_hardline(&mut stack, indent_delta.saturating_sub(printer.indent));
@@ -171,7 +187,7 @@ pub fn pprint<'a>(doc: &'a Doc<'a>, printer: &Printer) -> String {
                     join_impl
                 };
 
-                let joined = join_fn(sep, docs, printer);
+                let joined = join_fn(sep, docs, &printer);
 
                 for d in joined.into_iter().rev() {
                     stack.push(PrintItem {
@@ -252,20 +268,20 @@ impl Printer {
     }
 
     pub fn pprint<'a>(&self, doc: impl Into<Doc<'a>>) -> String {
-        pprint(&doc.into(), self)
+        pprint(doc.into(), self.clone().into())
     }
 }
 
 impl std::fmt::Debug for Doc<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = PRINTER.pprint(self.clone());
+        let s = PRINTER.pprint(self);
         f.write_str(&s)
     }
 }
 
 impl std::fmt::Display for Doc<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = PRINTER.pprint(self.clone());
+        let s = PRINTER.pprint(self);
         f.write_str(&s)
     }
 }

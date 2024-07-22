@@ -8,8 +8,10 @@ mod tests {
     #[pprint(verbose)]
     pub enum HeyEnum<'a> {
         There(&'a str),
+
         #[pprint(rename = "MyEnum::A")]
         A,
+
         B(regex::Regex),
     }
 
@@ -22,7 +24,7 @@ mod tests {
     }
 
     #[derive(Pretty)]
-    // #[pprint(verbose)]
+    #[pprint(verbose)]
     pub struct Strumct<'a> {
         a: Vec<usize>,
         b: HashMap<String, HeyEnum<'a>>,

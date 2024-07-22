@@ -5,9 +5,9 @@ use std::{
 
 use regex::Regex;
 
-/// A document that can be pretty printed.
-/// This is the core type of the library.
-/// It is an enum that represents the different ways a document can be printed.
+/// A Document that can be pretty printed.
+///
+/// This is the core type of the library, representing the different ways wherein a doc can be printed
 #[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Doc<'a> {
     Null,
@@ -80,7 +80,8 @@ pub fn join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'
 
 /// Join a vector of documents on a separator if the result fits the page,
 /// hence the name "smart join", otherwise join them on a line break.
-/// Implemented using the LaTeX algorithm described in
+///
+/// Implemented using the LaTeX algorithm described in:
 /// src/utils.rs
 pub fn smart_join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
     Doc::SmartJoin(
@@ -279,7 +280,7 @@ macro_rules! impl_from_tuple_to_doc {
             fn from(tuple: ($($t),*)) -> Self {
                 let ($($t),*) = tuple;
                 vec![$($t.into()),*]
-                    .smart_join(", ")
+                    .join(", ")
                     .group()
                     .wrap("(", ")")
             }
@@ -307,7 +308,7 @@ where
         let doc_vec: Vec<_> = vec.into_iter().map(|item| item.into()).collect();
 
         if !doc_vec.is_empty() {
-            let doc = doc_vec.smart_join(", ").group().wrap("[", "]").indent();
+            let doc = doc_vec.join(", ").group().wrap("[", "]").indent();
             doc
         } else {
             Doc::from("[]")
@@ -347,7 +348,7 @@ where
         let doc_vec: Vec<_> = set.into_iter().map(|item| item.into()).collect();
 
         if !doc_vec.is_empty() {
-            let doc = doc_vec.smart_join(", ").group().wrap("{", "}").indent();
+            let doc = doc_vec.join(", ").group().wrap("{", "}").indent();
             doc
         } else {
             Doc::from("{}")
