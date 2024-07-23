@@ -360,7 +360,7 @@ where
 {
     fn from(vec: Vec<T>) -> Doc<'a> {
         if !vec.is_empty() {
-            smart_join(Doc::from(", ") + Doc::Softline, vec)
+            join(Doc::from(", "), vec)
                 .group()
                 .wrap("[", "]")
                 .indent()
