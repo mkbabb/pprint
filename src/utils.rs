@@ -1,4 +1,4 @@
-use std::usize;
+use std::{collections::HashSet, usize};
 
 /// Text justification algorithm inspired by LaTeX's text justification algorithm.
 ///
@@ -19,7 +19,7 @@ use std::usize;
 /// # Returns
 ///
 /// A vector of indices that represent the end of each line in the justified text.
-pub fn text_justify(sep_length: usize, doc_lengths: &[usize], max_width: usize) -> Vec<usize> {
+pub fn text_justify(sep_length: usize, doc_lengths: &[usize], max_width: usize) -> HashSet<usize> {
     // Score struct to hold the "badness" and the index of the next word
     #[derive(Clone, Debug)]
     struct Score {
@@ -81,5 +81,5 @@ pub fn text_justify(sep_length: usize, doc_lengths: &[usize], max_width: usize) 
             *i = j;
             Some(j)
         })
-        .collect::<Vec<_>>()
+        .collect::<HashSet<_>>()
 }

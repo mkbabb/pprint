@@ -58,62 +58,56 @@ fn create_strumct(vec_size: usize) -> Strumct<'static> {
     }
 }
 
-// Benchmark pretty-printing small vector (10 elements)
-#[bench]
-fn bench_pprint_small_vector(b: &mut Bencher) {
-    let printer = Printer::default();
-    let s = create_strumct(10);
-    b.iter(|| {
-        let pprint = printer.pprint(&s);
-        test::black_box(pprint);
-    });
+// Helper function to create a Strumct with a vector of given size
+
+fn create_vec(vec_size: usize) -> Vec<usize> {
+    (1..=vec_size).collect()
 }
 
-// Benchmark Debug for small vector (10 elements)
-#[bench]
-fn bench_debug_small_vector(b: &mut Bencher) {
-    let s = create_strumct(10);
-    b.iter(|| {
-        let debug = format!("{:?}", s);
-        test::black_box(debug);
-    });
-}
+use std::fmt::Write as _;
+use std::io::Write as _;
 
 // Benchmark pretty-printing medium vector (1000 elements)
 #[bench]
 fn bench_pprint_medium_vector(b: &mut Bencher) {
-    let s = create_strumct(1000);
+    // let s = create_strumct(1000);
+
+    // let s: Vec<_> = create_vec(100).into_iter().map(|x| x as f64).collect();
+
+    let s: Vec<_> = (0..100).map(|x| {
+        create_vec(100).into_iter().map(|x| x as f64).collect::<Vec<_>>()
+    }).collect();
+
     b.iter(|| {
         let pprint = pprint(&s, None);
         test::black_box(pprint);
+
+        // use write to collect into a vec:
+        // let tmps = s.iter().map(|x| Doc::from(x));
+        // let mut out = Vec::new();
+
+        // tmps.into_iter().for_each(|x| {
+        //     match &x {
+        //         Doc::Bytes(b) => {
+        //             out.extend_from_slice(b);
+        //         }
+        //         _ => {}
+        //     };
+        // });
+
+        // test::black_box(String::from_utf8(out));
     });
 }
 
 // Benchmark Debug for medium vector (1000 elements)
 #[bench]
 fn bench_debug_medium_vector(b: &mut Bencher) {
-    let s = create_strumct(1000);
-    b.iter(|| {
-        let debug = format!("{:?}", s);
-        test::black_box(debug);
-    });
-}
+    // let s = create_strumct(1000);
+    // let s: Vec<_> = create_vec(100).into_iter().map(|x| x as f64).collect();
+    let s: Vec<_> = (0..100).map(|x| {
+        create_vec(100).into_iter().map(|x| x as f64).collect::<Vec<_>>()
+    }).collect();
 
-// Benchmark pretty-printing large vector (100,000 elements)
-#[bench]
-fn bench_pprint_large_vector(b: &mut Bencher) {
-    let printer = Printer::default();
-    let s = create_strumct(100_000);
-    b.iter(|| {
-        let pprint = printer.pprint(&s);
-        test::black_box(pprint);
-    });
-}
-
-// Benchmark Debug for large vector (100,000 elements)
-#[bench]
-fn bench_debug_large_vector(b: &mut Bencher) {
-    let s = create_strumct(100_000);
     b.iter(|| {
         let debug = format!("{:?}", s);
         test::black_box(debug);

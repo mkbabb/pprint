@@ -1,6 +1,9 @@
 use crate::doc::Doc;
 use crate::utils::text_justify;
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Write as _;
+use std::rc::Rc;
 
 pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Printer) -> usize {
     if docs.is_empty() {
@@ -8,14 +11,23 @@ pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Pr
     }
 
     let doc_length: usize = docs.iter().map(|d| count_text_length(d, printer)).sum();
-    let separator_length = count_text_length(sep, printer);
+    let sep_length = count_text_length(sep, printer);
 
-    doc_length + separator_length * (docs.len() - 1)
+    doc_length + sep_length * (docs.len() - 1)
 }
 
-pub fn count_text_length(doc: &Doc, printer: &Printer) -> usize {
+pub fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
     match doc {
+        Doc::Char(_) => 1,
+        Doc::DoubleChar(_) => 2,
+        Doc::TripleChar(_) => 3,
+        Doc::QuadChar(_) => 4,
+
+        Doc::SmallBytes(_, len) => *len,
+        Doc::Bytes(_, len) => *len,
+
         Doc::String(s) => s.len(),
+
         Doc::Concat(docs) => docs.iter().map(|d| count_text_length(d, printer)).sum(),
         Doc::Group(d) => count_text_length(d, printer),
         Doc::Indent(d) => count_text_length(d, printer).saturating_add(printer.indent),
@@ -36,45 +48,103 @@ pub fn count_text_length(doc: &Doc, printer: &Printer) -> usize {
     }
 }
 
-pub fn join_impl<'a>(sep: &'a Doc<'a>, docs: &'a [Doc], _: &Printer) -> Vec<&'a Doc<'a>> {
-    docs.iter()
-        .enumerate()
-        .fold(Vec::new(), |mut acc, (i, doc)| {
-            if i > 0 {
-                acc.push(sep);
-            }
-            acc.push(doc);
-            acc
-        })
-}
-
-pub fn smart_join_impl<'a>(
+pub fn smart_join_breaks<'a>(
     sep: &'a Doc<'a>,
-    docs: &'a [Doc],
+    docs: &'a [Doc<'a>],
     printer: &Printer,
-) -> Vec<&'a Doc<'a>> {
+) -> HashSet<usize> {
     let max_width = (printer.max_width / 4).max(2);
 
     let sep_length = count_text_length(sep, printer);
     let doc_lengths: Vec<_> = docs.iter().map(|d| count_text_length(d, printer)).collect();
 
-    // align the separator with the longest doc length:
+    // Align the separator with the longest doc length:
     let sep_length = sep_length + sep_length.max(doc_lengths.iter().max().copied().unwrap_or(0));
 
-    let breaks = text_justify(sep_length, &doc_lengths, max_width);
+    text_justify(sep_length, &doc_lengths, max_width)
+}
+
+#[derive(Clone, Copy)]
+struct PrintItem<'a> {
+    doc: &'a Doc<'a>,
+    indent_delta: usize,
+    tmp_output_span: Option<(usize, usize)>,
+}
+
+fn push_hardline(stack: &mut VecDeque<PrintItem>, indent_delta: usize) {
+    stack.push_back(PrintItem {
+        doc: &Doc::Hardline,
+        indent_delta,
+        tmp_output_span: None,
+    });
+}
+
+fn add_bytes(output: &mut Vec<u8>, b: &[u8]) -> usize {
+    output.extend_from_slice(b);
+    b.len()
+}
+
+fn add_bytes_from_doc<'a>(output: &mut Vec<u8>, doc: &'a Doc<'a>) -> (usize, usize) {
+    match doc {
+        Doc::Char(c) => {
+            output.push(*c);
+            (1, 1)
+        }
+        Doc::DoubleChar(cs) => (add_bytes(output, cs), 2),
+        Doc::TripleChar(cs) => (add_bytes(output, cs), 3),
+        Doc::QuadChar(cs) => (add_bytes(output, cs), 4),
+        Doc::SmallBytes(b, len) => (add_bytes(output, b), *len),
+        Doc::Bytes(b, len) => (add_bytes(output, b), *len),
+        Doc::String(s) => (add_bytes(output, s.as_bytes()), s.len()),
+        _ => (0, 0),
+    }
+}
+
+fn collapse_bytes_streak<'a, 'b>(
+    output: Rc<RefCell<Vec<u8>>>,
+    docs: &'a [Doc<'a>],
+    indent_delta: usize,
+) -> impl DoubleEndedIterator<Item = PrintItem<'a>> + 'a
+where
+    'b: 'a,
+{
+    let mut pushed = false;
+    let mut streak_len = 0;
 
     docs.iter()
         .enumerate()
-        .fold(Vec::new(), |mut acc, (i, doc)| {
-            if i > 0 {
-                acc.push(sep);
-                if breaks.contains(&i) {
-                    acc.push(&Doc::Hardline);
-                }
+        .filter_map(move |(i, d)| {
+            let byte_len = add_bytes_from_doc(&mut output.borrow_mut(), d).0;
+            let is_last = i == docs.len() - 1;
+
+            if (byte_len == 0 && pushed) || is_last {
+                let output_len = output.borrow().len();
+                let tmp_output_span = Some((output_len - streak_len - byte_len, output_len));
+
+                streak_len = 0;
+                pushed = false;
+
+                Some(PrintItem {
+                    doc: d,
+                    indent_delta,
+                    tmp_output_span,
+                })
+            } else if byte_len > 0 {
+                streak_len += byte_len;
+                pushed = true;
+
+                None
+            } else {
+                Some(PrintItem {
+                    doc: d,
+                    indent_delta,
+                    tmp_output_span: None,
+                })
             }
-            acc.push(doc);
-            acc
         })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
 }
 
 /// Core pretty printing function.
@@ -82,56 +152,53 @@ pub fn smart_join_impl<'a>(
 /// Uses a stack to avoid recursion, keeping track of the current line length,
 /// and indent level.
 pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
-   
-    
     let doc = doc.into();
-
-    return "".into();
 
     let printer = printer.unwrap_or_default();
 
-    struct PrintItem<'a> {
-        doc: &'a Doc<'a>,
-        indent_delta: usize,
-    }
+    let mut stack = VecDeque::with_capacity(8);
+    // let mut tmp_stack = Vec::with_capacity(8);
 
-    let mut output = String::new();
-    let mut current_line_len = 0;
-
-    
-
-    let push_hardline = |stack: &mut Vec<_>, indent_delta: usize| {
-        stack.push(PrintItem {
-            doc: &Doc::Hardline,
-            indent_delta,
-        });
-    };
-
-    let mut stack = vec![PrintItem {
+    stack.push_back(PrintItem {
         doc: &doc,
         indent_delta: 0,
-    }];
+        tmp_output_span: None,
+    });
 
-   
+    let mut output = Vec::new();
+    let tmp_output = Rc::new(RefCell::new(Vec::new()));
 
-    let mut hardlines = HashMap::new();
+    let mut prev_len = 0;
+    let mut current_line_len = 0;
 
-    let space = if printer.use_tabs { "\t" } else { " " };
+    let space = (if printer.use_tabs { "\t" } else { " " }).as_bytes();
 
-    while let Some(PrintItem { doc, indent_delta }) = stack.pop() {
+    let add_hardline = |output: &mut Vec<u8>, indent_delta: usize| {
+        let space = space.repeat(indent_delta);
+
+        writeln!(output).unwrap();
+        output.extend_from_slice(&space);
+
+        (space.len(), indent_delta)
+    };
+
+    while let Some(PrintItem {
+        doc,
+        indent_delta,
+        tmp_output_span,
+    }) = stack.pop_back()
+    {
+        if let Some((start, end)) = tmp_output_span {
+            current_line_len += add_bytes(&mut output, &tmp_output.borrow()[start..end]);
+        };
+
         match &doc {
-            Doc::String(s) => {
-                current_line_len += s.len();
-                output.push_str(s);
-            }
-
             Doc::Concat(docs) => {
-                for d in docs.iter().rev() {
-                    stack.push(PrintItem {
-                        doc: d,
-                        indent_delta,
-                    });
+                for d in collapse_bytes_streak(tmp_output.clone(), docs, indent_delta) {
+                    stack.push_back(d);
                 }
+
+                prev_len = tmp_output.borrow().len();
             }
 
             Doc::Group(d) => {
@@ -141,9 +208,10 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                     push_hardline(&mut stack, indent_delta.saturating_sub(printer.indent));
                 }
 
-                stack.push(PrintItem {
+                stack.push_back(PrintItem {
                     doc: d,
                     indent_delta,
+                    tmp_output_span: None,
                 });
 
                 if needs_breaking {
@@ -153,78 +221,94 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
 
             Doc::IfBreak(doc, other) => {
                 let mut is_or_was_broken = false;
-                if let Some(last) = stack.last() {
+                if let Some(last) = stack.back() {
                     is_or_was_broken =
                         matches!(last.doc, &Doc::Hardline) || matches!(last.doc, &Doc::Softline);
                 }
 
                 let d = if is_or_was_broken { doc } else { other };
 
-                stack.push(PrintItem {
+                stack.push_back(PrintItem {
                     doc: d,
                     indent_delta,
+                    tmp_output_span: None,
                 });
             }
 
             Doc::Indent(d) => {
-                stack.push(PrintItem {
+                stack.push_back(PrintItem {
                     doc: d,
                     indent_delta: indent_delta.saturating_add(printer.indent),
+                    tmp_output_span: None,
                 });
             }
 
             Doc::Dedent(d) => {
-                stack.push(PrintItem {
+                stack.push_back(PrintItem {
                     doc: d,
                     indent_delta: indent_delta.saturating_sub(printer.indent),
+                    tmp_output_span: None,
                 });
             }
 
             Doc::Join(sep, docs) | Doc::SmartJoin(sep, docs) => {
-                let join_fn = if matches!(doc, Doc::SmartJoin(_, _)) {
-                    smart_join_impl
-                } else {
-                    join_impl
+                let breaks = match doc {
+                    Doc::Join(_, _) => None,
+                    Doc::SmartJoin(_, _) => Some(smart_join_breaks(sep, docs, &printer)),
+                    _ => unreachable!(),
                 };
 
-                let joined = join_fn(sep, docs, &printer);
+                for (i, d) in docs.iter().rev().enumerate() {
+                    let i = docs.len() - i - 1;
 
-                for d in joined.into_iter().rev() {
-                    stack.push(PrintItem {
+                    stack.push_back(PrintItem {
                         doc: d,
                         indent_delta,
+                        tmp_output_span: None,
                     });
+
+                    if i > 0 {
+                        if let Some(breaks) = &breaks
+                            && breaks.contains(&i)
+                        {
+                            push_hardline(&mut stack, indent_delta);
+                        }
+                        stack.push_back(PrintItem {
+                            doc: sep,
+                            indent_delta,
+                            tmp_output_span: None,
+                        });
+                    }
                 }
             }
 
             Doc::Line => {
                 current_line_len = 0;
-                output.push('\n');
+                writeln!(output).unwrap();
             }
 
             Doc::Hardline => {
-                let line = hardlines
-                    .entry(indent_delta)
-                    .or_insert_with(|| space.repeat(indent_delta));
-
-                output.push('\n');
-                output.push_str(line);
-
-                current_line_len = line.len();
+                current_line_len = add_hardline(&mut output, indent_delta).0;
             }
 
             Doc::Mediumline if current_line_len > printer.max_width / 2 => {
-                push_hardline(&mut stack, indent_delta);
+                current_line_len = add_hardline(&mut output, indent_delta).0;
             }
 
             Doc::Softline if current_line_len > printer.max_width => {
-                push_hardline(&mut stack, indent_delta);
+                current_line_len = add_hardline(&mut output, indent_delta).0;
             }
 
+            _ if tmp_output_span.is_none() => {
+                current_line_len += add_bytes_from_doc(&mut output, doc).0;
+            }
             _ => {}
         }
     }
-    output
+
+    add_bytes(&mut output, &tmp_output.borrow()[prev_len..]);
+
+    String::from_utf8(output).unwrap()
 }
 
 #[derive(Debug, Clone)]
@@ -237,8 +321,8 @@ pub struct Printer {
 
 /// Default printer configuration.
 pub const PRINTER: Printer = Printer {
-    max_width: 80,
-    indent: 2,
+    max_width: 32,
+    indent: 4,
     break_long_text: false,
     use_tabs: false,
 };
@@ -267,21 +351,21 @@ impl Printer {
         }
     }
 
-    pub fn pprint<'a>(&self, doc: impl Into<Doc<'a>>) -> String {
-        pprint(doc.into(), self.clone().into())
-    }
+    // pub fn pprint<'a>(&self, doc: impl Into<Doc<'a>>) -> String {
+    //     pprint(doc.into(), self.clone().into())
+    // }
 }
 
-impl std::fmt::Debug for Doc<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = PRINTER.pprint(self);
-        f.write_str(&s)
-    }
-}
+// impl std::fmt::Debug for Doc<'_> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         let s = PRINTER.pprint(self);
+//         f.write_str(&s)
+//     }
+// }
 
-impl std::fmt::Display for Doc<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = PRINTER.pprint(self);
-        f.write_str(&s)
-    }
-}
+// impl std::fmt::Display for Doc<'_> {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         let s = PRINTER.pprint(self);
+//         f.write_str(&s)
+//     }
+// }

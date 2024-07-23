@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -5,12 +6,23 @@ use std::{
 
 use regex::Regex;
 
+const BYTES_SIZE: usize = 64;
+
 /// A Document that can be pretty printed.
 ///
 /// This is the core type of the library, representing the different ways wherein a doc can be printed
-#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone)]
 pub enum Doc<'a> {
     Null,
+
+    Char(u8),
+    DoubleChar([u8; 2]),
+    TripleChar([u8; 3]),
+    QuadChar([u8; 4]),
+
+    Bytes(Vec<u8>, usize),
+    SmallBytes([u8; BYTES_SIZE], usize),
+
     String(Cow<'a, str>),
 
     Concat(Vec<Doc<'a>>),
@@ -49,16 +61,60 @@ impl<'a> std::ops::Add for Doc<'a> {
     }
 }
 
+fn format_small_bytes<'a, T>(value: T) -> Doc<'a>
+where
+    T: std::fmt::Display,
+{
+    let mut bytes = [0u8; BYTES_SIZE];
+
+    write!(&mut bytes[..], "{}", value).unwrap();
+
+    let len = bytes.iter().position(|&x| x == 0).unwrap_or(BYTES_SIZE);
+
+    if len == 1 {
+        Doc::Char(bytes[0])
+    } else if len == 2 {
+        Doc::DoubleChar([bytes[0], bytes[1]])
+    } else if len == 3 {
+        Doc::TripleChar([bytes[0], bytes[1], bytes[2]])
+    } else if len == 4 {
+        Doc::QuadChar([bytes[0], bytes[1], bytes[2], bytes[3]])
+    } else {
+        Doc::SmallBytes(bytes, len)
+    }
+}
+
+pub fn bytes<'a>(value: &[u8], len: Option<usize>) -> Doc<'a> {
+    let len = len.unwrap_or(value.len());
+
+    if len == 1 {
+        Doc::Char(value[0])
+    } else if len == 2 {
+        Doc::DoubleChar([value[0], value[1]])
+    } else if len == 3 {
+        Doc::TripleChar([value[0], value[1], value[2]])
+    } else if len == 4 {
+        Doc::QuadChar([value[0], value[1], value[2], value[3]])
+    } else if len <= BYTES_SIZE {
+        let mut bytes = [0u8; BYTES_SIZE];
+        bytes[..len].copy_from_slice(value);
+
+        Doc::SmallBytes(bytes, len)
+    } else {
+        Doc::Bytes(value.into(), len)
+    }
+}
+
 /// Group a document if it contains a line break.
 /// A group is a document that is printed on a single line if it fits the page,
 /// otherwise it is printed with line breaks.
-pub fn group<'a>(doc: impl Into<Doc<'a>>) -> Doc<'a> {
+pub fn group<'a>(doc: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
     Doc::Group(Box::new(doc.into()))
 }
 
 /// Concatenate a vector of documents into a single document.
-pub fn concat<'a>(docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
-    Doc::Concat(docs.into_iter().map(|d| d.into()).collect())
+pub fn concat<'a>(docs: Vec<impl Into<Doc<'a>> + Clone>) -> Doc<'a> {
+    Doc::Concat(docs.iter().map(Doc::from).collect())
 }
 
 /// Enwrap a document with two other documents, `left` and `right`.
@@ -67,15 +123,12 @@ pub fn wrap<'a>(
     doc: impl Into<Doc<'a>>,
     right: impl Into<Doc<'a>>,
 ) -> Doc<'a> {
-    concat(vec![left.into(), doc.into(), right.into()])
+    Doc::Concat(vec![left.into(), doc.into(), right.into()])
 }
 
 /// Join a vector of documents on a separator.
-pub fn join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
-    Doc::Join(
-        Box::new(sep.into()),
-        docs.into_iter().map(|d| d.into()).collect(),
-    )
+pub fn join<'a>(sep: impl Into<Doc<'a>> + Clone, docs: Vec<impl Into<Doc<'a>> + Clone>) -> Doc<'a> {
+    Doc::Join(Box::new(sep.into()), docs.iter().map(Doc::from).collect())
 }
 
 /// Join a vector of documents on a separator if the result fits the page,
@@ -83,11 +136,11 @@ pub fn join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'
 ///
 /// Implemented using the LaTeX algorithm described in:
 /// src/utils.rs
-pub fn smart_join<'a>(sep: impl Into<Doc<'a>>, docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
-    Doc::SmartJoin(
-        Box::new(sep.into()),
-        docs.into_iter().map(|d| d.into()).collect(),
-    )
+pub fn smart_join<'a>(
+    sep: impl Into<Doc<'a>> + Clone,
+    docs: Vec<impl Into<Doc<'a>> + Clone>,
+) -> Doc<'a> {
+    Doc::SmartJoin(Box::new(sep.into()), docs.iter().map(Doc::from).collect())
 }
 
 /// Indent a document by one level.
@@ -146,50 +199,50 @@ impl Dedent for Doc<'_> {
 }
 
 pub trait Join<'a> {
-    fn join(self, sep: impl Into<Doc<'a>>) -> Doc<'a>;
+    fn join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a>;
 }
 
 impl<'a> Join<'a> for Vec<Doc<'a>> {
-    fn join(self, sep: impl Into<Doc<'a>>) -> Doc<'a> {
+    fn join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
         join(sep, self)
     }
 }
 
 pub trait SmartJoin<'a> {
-    fn smart_join(self, sep: impl Into<Doc<'a>>) -> Doc<'a>;
+    fn smart_join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a>;
 }
 
 impl<'a> SmartJoin<'a> for Vec<Doc<'a>> {
-    fn smart_join(self, sep: impl Into<Doc<'a>>) -> Doc<'a> {
+    fn smart_join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
         smart_join(sep, self)
     }
 }
 
 pub trait Wrap<'a> {
-    fn wrap(self, left: impl Into<Doc<'a>>, right: impl Into<Doc<'a>>) -> Doc<'a>;
+    fn wrap(self, left: impl Into<Doc<'a>> + Clone, right: impl Into<Doc<'a>> + Clone) -> Doc<'a>;
 }
 
 impl<'a> Wrap<'a> for Doc<'a> {
-    fn wrap(self, left: impl Into<Doc<'a>>, right: impl Into<Doc<'a>>) -> Doc<'a> {
-        concat(vec![left.into(), self, right.into()])
+    fn wrap(self, left: impl Into<Doc<'a>> + Clone, right: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
+        wrap(left, self, right)
     }
 }
 
 impl<'a> From<&'a str> for Doc<'a> {
     fn from(s: &'a str) -> Doc<'a> {
-        Doc::String(s.into())
+        bytes(s.as_bytes(), s.len().into())
     }
 }
 
 impl<'a> From<String> for Doc<'a> {
     fn from(s: String) -> Doc<'a> {
-        Doc::String(s.into())
+        bytes(s.as_bytes(), s.len().into())
     }
 }
 
 impl<'a> From<bool> for Doc<'a> {
     fn from(b: bool) -> Doc<'a> {
-        Doc::String(b.to_string().into())
+        format_small_bytes(b)
     }
 }
 
@@ -198,7 +251,7 @@ macro_rules! impl_from_number_to_doc {
         $(
             impl<'a> From<$t> for Doc<'a>  {
                 fn from(value: $t) -> Self {
-                    Doc::String(value.to_string().into())
+                    format_small_bytes(value)
                 }
             }
         )*
@@ -218,18 +271,18 @@ where
     }
 }
 
-impl<'a, T> From<&[T]> for Doc<'a>
-where
-    T: Into<Doc<'a>> + Clone,
-{
-    fn from(slice: &[T]) -> Doc<'a> {
-        slice
-            .iter()
-            .map(|item| item.clone().into())
-            .collect::<Vec<_>>()
-            .into()
-    }
-}
+// impl<'a, T> From<&[T]> for Doc<'a>
+// where
+//     T: Into<Doc<'a>> + Clone,
+// {
+//     fn from(slice: &[T]) -> Doc<'a> {
+//         slice
+//             .iter()
+//             .map(|item| item.clone().into())
+//             .collect::<Vec<_>>()
+//             .into()
+//     }
+// }
 
 impl From<()> for Doc<'_> {
     fn from(_: ()) -> Self {
@@ -279,6 +332,7 @@ macro_rules! impl_from_tuple_to_doc {
         {
             fn from(tuple: ($($t),*)) -> Self {
                 let ($($t),*) = tuple;
+
                 vec![$($t.into()),*]
                     .join(", ")
                     .group()
@@ -302,14 +356,14 @@ impl_from_tuple_to_doc!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
 impl<'a, T> From<Vec<T>> for Doc<'a>
 where
-    T: Into<Doc<'a>>,
+    T: Into<Doc<'a>> + 'a + Clone,
 {
     fn from(vec: Vec<T>) -> Doc<'a> {
-        let doc_vec: Vec<_> = vec.into_iter().map(|item| item.into()).collect();
-
-        if !doc_vec.is_empty() {
-            let doc = doc_vec.join(", ").group().wrap("[", "]").indent();
-            doc
+        if !vec.is_empty() {
+            smart_join(Doc::from(", ") + Doc::Softline, vec)
+                .group()
+                .wrap("[", "]")
+                .indent()
         } else {
             Doc::from("[]")
         }

@@ -1,3 +1,6 @@
+#![feature(let_chains)]
+#![feature(iter_collect_into)]
+
 pub mod doc;
 pub use doc::*;
 

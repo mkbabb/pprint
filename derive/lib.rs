@@ -69,7 +69,7 @@ fn apply_pretty_doc_attributes(
     if pretty_attr.indent {
         doc = quote! { (#doc).indent() };
     }
-    
+
     doc
 }
 
@@ -171,7 +171,7 @@ fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream
         };
         let field_doc = apply_pretty_doc_attributes(&field_doc, &pretty_attrs);
         let field_doc = quote! {
-            concat(vec![
+            Doc::Concat(vec![
                 Doc::from(#field_name),
                 Doc::from(": "),
                 #field_doc,
@@ -235,11 +235,17 @@ fn generate_struct_match(
             };
             let doc_match = if pretty_attributes.verbose {
                 quote! {
-                    concat(vec![#header, #body])
+                    Doc::Concat(vec![#header, #body])
                 }
             } else {
                 body
             };
+
+            // let doc_match = quote! { Doc::Concat(vec![#(#fields_match,)*]) };
+
+            // let doc_match =  quote! { Doc::Null };
+        
+
             quote! {
                 // The hack to remove the unused variable warning when the field is ignored.
                 (#((&_self.#named_fields),)*);
@@ -321,7 +327,7 @@ fn generate_variants_match(
     // but not if the variant has no fields
     let field_doc = if pretty_attributes.verbose && !matches!(variant.fields, Fields::Unit) {
         quote! {
-            concat(vec![
+            Doc::Concat(vec![
                 Doc::from(#variant_name),
                 Doc::from(#field_doc)
                 .wrap("(", ")")
