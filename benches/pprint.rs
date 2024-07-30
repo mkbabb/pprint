@@ -71,31 +71,21 @@ use std::io::Write as _;
 #[bench]
 fn bench_pprint_medium_vector(b: &mut Bencher) {
     // let s = create_strumct(1000);
-
     // let s: Vec<_> = create_vec(100).into_iter().map(|x| x as f64).collect();
 
-    let s: Vec<_> = (0..100).map(|x| {
-        create_vec(100).into_iter().map(|x| x as f64).collect::<Vec<_>>()
-    }).collect();
-
     b.iter(|| {
-        let pprint = pprint(&s, None);
-        test::black_box(pprint);
+        let s: Vec<_> = (0..100)
+            .map(|x| {
+                create_vec(100)
+                // .into_iter()
+                // .map(|x| x as f64)
+                // .collect::<Vec<_>>()
+            })
+            .collect();
+        // for _ in 0..1000 {
+        let out = test::black_box(pprint(&s, None));
 
-        // use write to collect into a vec:
-        // let tmps = s.iter().map(|x| Doc::from(x));
-        // let mut out = Vec::new();
-
-        // tmps.into_iter().for_each(|x| {
-        //     match &x {
-        //         Doc::Bytes(b) => {
-        //             out.extend_from_slice(b);
-        //         }
-        //         _ => {}
-        //     };
-        // });
-
-        // test::black_box(String::from_utf8(out));
+        // }
     });
 }
 
@@ -103,13 +93,21 @@ fn bench_pprint_medium_vector(b: &mut Bencher) {
 #[bench]
 fn bench_debug_medium_vector(b: &mut Bencher) {
     // let s = create_strumct(1000);
-    // let s: Vec<_> = create_vec(100).into_iter().map(|x| x as f64).collect();
-    let s: Vec<_> = (0..100).map(|x| {
-        create_vec(100).into_iter().map(|x| x as f64).collect::<Vec<_>>()
-    }).collect();
+    // let s: Vec<_> = create_vec(1000).into_iter().map(|x| x as f64).collect();
 
     b.iter(|| {
-        let debug = format!("{:?}", s);
-        test::black_box(debug);
+        let s: Vec<_> = (0..100)
+            .map(|x| {
+                create_vec(100)
+                // .into_iter()
+                // .map(|x| x as f64)
+                // .collect::<Vec<_>>()
+            })
+            .collect();
+        // let debug = format!("{:?}", s);
+        // test::black_box(debug);
+        // for _ in 0..100 {
+        let out = test::black_box(format!("{:#?}", s));
+        // }
     });
 }

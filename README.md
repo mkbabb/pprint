@@ -115,7 +115,7 @@ test bench_pprint_medium_vector ... bench:   1,303,418 ns/iter (+/- 24,732)
 ##### `join`
 
 ```shell
-test bench_pprint_medium_vector ... bench:     668,400 ns/iter (+/- 13,639)
+test bench_pprint_medium_vector ... bench:     646,447 ns/iter (+/- 13,639)
 ```
 
 ##### `std::fmt::Debug`

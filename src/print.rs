@@ -1,23 +1,114 @@
+use lazy_static::lazy_static;
+
 use crate::doc::Doc;
 use crate::utils::text_justify;
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::Write as _;
-use std::rc::Rc;
+use crate::DigitCount;
 
+use std::collections::HashSet;
+
+use std::io::Write as _;
+use std::sync::Mutex;
+
+use std::mem::size_of;
+
+struct PrintItem<'a> {
+    doc: &'a Doc<'a>,
+    indent_delta: usize,
+
+    left: Option<&'a Doc<'a>>,
+    break_left: usize,
+}
+
+struct PrintState<'a> {
+    stack: Vec<PrintItem<'a>>,
+    output: Vec<u8>,
+
+    current_line_len: usize,
+    indent_delta: usize,
+
+    space_cache: Vec<u8>,
+    join_breaks: Vec<usize>,
+}
+
+#[inline(always)]
+fn is_literal_doc(doc: &Doc) -> bool {
+    fn is_literal(doc: &Doc) -> bool {
+        matches!(
+            doc,
+            Doc::Char(_)
+                | Doc::DoubleChar(_)
+                | Doc::TripleChar(_)
+                | Doc::QuadChar(_)
+                | Doc::SmallBytes(_, _)
+                | Doc::Bytes(_, _)
+                | Doc::String(_)
+                | Doc::i8(_)
+                | Doc::i16(_)
+                | Doc::i32(_)
+                | Doc::i64(_)
+                | Doc::i128(_)
+                | Doc::isize(_)
+                | Doc::u8(_)
+                | Doc::u16(_)
+                | Doc::u32(_)
+                | Doc::u64(_)
+                | Doc::u128(_)
+                | Doc::usize(_)
+                | Doc::f32(_)
+                | Doc::f64(_)
+                | Doc::Line
+                | Doc::Softline
+                | Doc::Mediumline
+                | Doc::Hardline
+        )
+    }
+
+    match doc {
+        Doc::DoubleDoc(doc1, doc2) => is_literal_doc(doc1) && is_literal_doc(doc2),
+        Doc::TripleDoc(doc1, doc2, doc3) => {
+            is_literal_doc(doc1) && is_literal_doc(doc2) && is_literal_doc(doc3)
+        }
+        Doc::HardlineDoc(doc) => is_literal_doc(doc),
+        // Doc::Concat(docs) => docs.iter().all(is_literal),
+        _ => is_literal(doc),
+    }
+}
+
+#[inline(always)]
 pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Printer) -> usize {
     if docs.is_empty() {
         return 0;
     }
 
-    let doc_length: usize = docs.iter().map(|d| count_text_length(d, printer)).sum();
-    let sep_length = count_text_length(sep, printer);
+    let doc_len: usize = docs.iter().map(|d| count_text_length(d, printer)).sum();
+    let sep_len = count_text_length(sep, printer);
 
-    doc_length + sep_length * (docs.len() - 1)
+    doc_len + sep_len * (docs.len() - 1)
 }
 
+#[inline]
 pub fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
     match doc {
+        Doc::Concat(docs) => docs.iter().map(|d| count_text_length(d, printer)).sum(),
+
+        Doc::Group(d) => count_text_length(d, printer),
+
+        Doc::Indent(d) => count_text_length(d, printer).saturating_add(printer.indent),
+        Doc::Dedent(d) => count_text_length(d, printer).saturating_sub(printer.indent),
+
+        Doc::Join(sep, docs) => count_join_length(sep, docs, printer),
+
+        Doc::SmartJoin(sep, docs) => {
+            let len = count_join_length(sep, docs, printer);
+            len.min(len + printer.max_width)
+        }
+
+        Doc::IfBreak(t, f) => count_text_length(t, printer).max(count_text_length(f, printer)),
+
+        Doc::Softline => printer.max_width / 2,
+
+        Doc::Hardline | Doc::Line => printer.max_width,
+
         Doc::Char(_) => 1,
         Doc::DoubleChar(_) => 2,
         Doc::TripleChar(_) => 3,
@@ -28,31 +119,35 @@ pub fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
 
         Doc::String(s) => s.len(),
 
-        Doc::Concat(docs) => docs.iter().map(|d| count_text_length(d, printer)).sum(),
-        Doc::Group(d) => count_text_length(d, printer),
-        Doc::Indent(d) => count_text_length(d, printer).saturating_add(printer.indent),
-        Doc::Dedent(d) => count_text_length(d, printer).saturating_sub(printer.indent),
-        Doc::Join(sep, docs) => count_join_length(sep, docs, printer),
-        Doc::IfBreak(t, f) => count_text_length(t, printer).max(count_text_length(f, printer)),
-        Doc::SmartJoin(sep, docs) => {
-            let length = count_join_length(sep, docs, printer);
-            if length * docs.len() >= printer.max_width {
-                length + printer.max_width
-            } else {
-                length
-            }
-        }
-        Doc::Hardline | Doc::Mediumline | Doc::Line => printer.max_width,
-        Doc::Softline => printer.max_width / 2,
+        Doc::i8(value) => value.len(),
+        Doc::i16(value) => value.len(),
+        Doc::i32(value) => value.len(),
+        Doc::i64(value) => value.len(),
+        Doc::i128(value) => value.len(),
+        Doc::isize(value) => value.len(),
+
+        Doc::u8(value) => value.len(),
+        Doc::u16(value) => value.len(),
+        Doc::u32(value) => value.len(),
+        Doc::u64(value) => value.len(),
+        Doc::u128(value) => value.len(),
+        Doc::usize(value) => value.len(),
+
+        Doc::f32(_) => 10,
+        Doc::f64(_) => 20,
+
         _ => 0,
     }
 }
 
+#[inline(always)]
 pub fn smart_join_breaks<'a>(
     sep: &'a Doc<'a>,
     docs: &'a [Doc<'a>],
-    printer: &Printer,
-) -> HashSet<usize> {
+
+    state: &mut PrintState<'a>,
+    printer: &mut Printer,
+) {
     let max_width = (printer.max_width / 4).max(2);
 
     let sep_length = count_text_length(sep, printer);
@@ -61,254 +156,470 @@ pub fn smart_join_breaks<'a>(
     // Align the separator with the longest doc length:
     let sep_length = sep_length + sep_length.max(doc_lengths.iter().max().copied().unwrap_or(0));
 
-    text_justify(sep_length, &doc_lengths, max_width)
+    state.join_breaks.clear();
+
+    text_justify(sep_length, &doc_lengths, max_width, &mut state.join_breaks)
 }
 
-#[derive(Clone, Copy)]
-struct PrintItem<'a> {
-    doc: &'a Doc<'a>,
-    indent_delta: usize,
-    tmp_output_span: Option<(usize, usize)>,
+#[inline(always)]
+fn format_int<T>(value: T, state: &mut PrintState) -> usize
+where
+    T: itoap::Integer + std::fmt::Display,
+{
+    // unsafe {
+    //     // First, extend the output by i128::MAX_DIGITS (40) bytes:
+    //     output.extend_from_slice(&[0; itoa::raw::I128_MAX_LEN]);
+    //     // Then, format the integer into the last 40 bytes of the output:
+    //     let len = itoa::raw::format(
+    //         value,
+    //         output
+    //             .as_mut_ptr()
+    //             .add(output.len() - itoa::raw::I128_MAX_LEN),
+    //     );
+    //     // Then, truncate the output to the correct length:
+    //     output.truncate(output.len() - itoa::raw::I128_MAX_LEN + len);
+
+    //     len
+    // }
+    let prev_len = state.output.len();
+    itoap::write_to_vec(&mut state.output, value);
+    state.output.len() - prev_len
+
+    // let mut buf = itoa::Buffer::new();
+    // let s = buf.format(value).as_bytes();
+    // output.extend_from_slice(s);
+    // s.len()
+
+    // let prev_len = output.len();
+    // write!(output, "{}", value).unwrap();
+    // output.len() - prev_len
 }
 
-fn push_hardline(stack: &mut VecDeque<PrintItem>, indent_delta: usize) {
-    stack.push_back(PrintItem {
-        doc: &Doc::Hardline,
-        indent_delta,
-        tmp_output_span: None,
-    });
+// Function for f64
+#[inline(always)]
+fn format_f64<T>(value: T, state: &mut PrintState) -> usize
+where
+    T: std::fmt::Display + dragonbox::Float,
+{
+    // unsafe {
+    //     const MAX_LEN: usize = 16;
+    //     // First, extend the output by 16 bytes:
+    //     output.extend_from_slice(&[0; MAX_LEN]);
+    //     // Then, format the f32 into the last MAX_LEN bytes of the output:
+    //     let len = ryu::raw::format32(value, output.as_mut_ptr().add(output.len() - MAX_LEN));
+    //     // Then, truncate the output to the correct length:
+    //     output.truncate(output.len() - MAX_LEN + len);
+
+    //     len
+    // }
+
+    let mut buf = dragonbox::Buffer::new();
+    let s = buf.format_finite(value).as_bytes();
+    state.output.extend_from_slice(s);
+    s.len()
+
+    // let mut buf = ryu::Buffer::new();
+    // let s = buf.format_finite(value).as_bytes();
+    // output.extend_from_slice(s);
+    // s.len()
+
+    // write!(output, "{}", value as f32).unwrap();
+    // output.len()
 }
 
-fn add_bytes(output: &mut Vec<u8>, b: &[u8]) -> usize {
-    output.extend_from_slice(b);
-    b.len()
-}
+#[inline(always)]
+fn append_line(state: &mut PrintState, printer: &mut Printer) -> usize {
+    let space_cache = &mut state.space_cache;
 
-fn add_bytes_from_doc<'a>(output: &mut Vec<u8>, doc: &'a Doc<'a>) -> (usize, usize) {
-    match doc {
-        Doc::Char(c) => {
-            output.push(*c);
-            (1, 1)
+    let indent_delta = state.indent_delta;
+
+    if space_cache.is_empty() {
+        space_cache.push(b'\n');
+    }
+
+    if indent_delta >= space_cache.len() {
+        let space = if printer.use_tabs { b'\t' } else { b' ' };
+        for _ in space_cache.len()..=indent_delta {
+            space_cache.push(space);
         }
-        Doc::DoubleChar(cs) => (add_bytes(output, cs), 2),
-        Doc::TripleChar(cs) => (add_bytes(output, cs), 3),
-        Doc::QuadChar(cs) => (add_bytes(output, cs), 4),
-        Doc::SmallBytes(b, len) => (add_bytes(output, b), *len),
-        Doc::Bytes(b, len) => (add_bytes(output, b), *len),
-        Doc::String(s) => (add_bytes(output, s.as_bytes()), s.len()),
-        _ => (0, 0),
+    }
+
+    state.output.extend_from_slice(&space_cache[..indent_delta]);
+
+    indent_delta
+}
+
+#[inline(always)]
+fn handle_line<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) -> usize {
+    match doc {
+        Doc::Line => {
+            state.output.push(b'\n');
+            0
+        }
+
+        Doc::Hardline => append_line(state, printer),
+
+        Doc::Mediumline if state.current_line_len > printer.max_width / 2 => {
+            append_line(state, printer)
+        }
+
+        Doc::Softline if state.current_line_len > printer.max_width => append_line(state, printer),
+
+        _ => state.current_line_len,
     }
 }
 
-fn collapse_bytes_streak<'a, 'b>(
-    output: Rc<RefCell<Vec<u8>>>,
+#[inline(always)]
+fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) {
+    let offset = match doc {
+        Doc::Char(c) => {
+            state.output.push(*c);
+            1
+        }
+        Doc::DoubleChar(cs) => {
+            state.output.extend_from_slice(cs);
+            2
+        }
+        Doc::TripleChar(cs) => {
+            state.output.extend_from_slice(cs);
+            3
+        }
+        Doc::QuadChar(cs) => {
+            state.output.extend_from_slice(cs);
+            4
+        }
+
+        Doc::SmallBytes(b, len) => {
+            state.output.extend_from_slice(b);
+            *len
+        }
+
+        Doc::Bytes(b, len) => {
+            state.output.extend_from_slice(b);
+            *len
+        }
+
+        Doc::String(s) => {
+            state.output.extend_from_slice(s.as_bytes());
+            s.len()
+        }
+
+        Doc::i8(v) => format_int(*v, state),
+        Doc::i16(v) => format_int(*v, state),
+        Doc::i32(v) => format_int(*v, state),
+        Doc::i64(v) => format_int(*v, state),
+        Doc::i128(v) => format_int(*v, state),
+        Doc::isize(v) => format_int(*v, state),
+
+        Doc::u8(v) => format_int(*v, state),
+        Doc::u16(v) => format_int(*v, state),
+        Doc::u32(v) => format_int(*v, state),
+        Doc::u64(v) => format_int(*v, state),
+        Doc::u128(v) => format_int(*v, state),
+        Doc::usize(v) => format_int(*v, state),
+
+        Doc::f32(v) => format_f64(*v as f64, state),
+        Doc::f64(v) => format_f64(*v, state),
+
+        _ => 0,
+    };
+
+    state.current_line_len = offset + handle_line(doc, state, printer);
+
+    match doc {
+        Doc::DoubleDoc(doc1, doc2) => {
+            handle_literal(doc1, state, printer);
+            handle_literal(doc2, state, printer);
+        }
+        Doc::TripleDoc(doc1, doc2, doc3) => {
+            handle_literal(doc1, state, printer);
+            handle_literal(doc2, state, printer);
+            handle_literal(doc3, state, printer);
+        }
+        _ => {}
+    }
+}
+
+fn handle_join<'a>(
+    doc: &'a Doc<'a>,
+    sep: &'a Doc<'a>,
     docs: &'a [Doc<'a>],
-    indent_delta: usize,
-) -> impl DoubleEndedIterator<Item = PrintItem<'a>> + 'a
-where
-    'b: 'a,
-{
-    let mut pushed = false;
-    let mut streak_len = 0;
+    state: &mut PrintState<'a>,
+    printer: &mut Printer,
+) {
+    if let Doc::SmartJoin(_, _) = doc {
+        smart_join_breaks(sep, docs, state, printer);
+    }
 
-    docs.iter()
-        .enumerate()
-        .filter_map(move |(i, d)| {
-            let byte_len = add_bytes_from_doc(&mut output.borrow_mut(), d).0;
-            let is_last = i == docs.len() - 1;
+    let sep_is_lit = is_literal_doc(sep);
 
-            if (byte_len == 0 && pushed) || is_last {
-                let output_len = output.borrow().len();
-                let tmp_output_span = Some((output_len - streak_len - byte_len, output_len));
+    for (i, d) in docs.iter().rev().enumerate() {
+        let i = docs.len() - i - 1;
 
-                streak_len = 0;
-                pushed = false;
+        let left = if i > 0 && sep_is_lit { Some(sep) } else { None };
 
-                Some(PrintItem {
-                    doc: d,
-                    indent_delta,
-                    tmp_output_span,
-                })
-            } else if byte_len > 0 {
-                streak_len += byte_len;
-                pushed = true;
+        let break_left = if state.join_breaks.binary_search(&i).is_ok() {
+            state.indent_delta
+        } else {
+            0
+        };
 
-                None
+        state.stack.push(PrintItem {
+            doc: d,
+            indent_delta: state.indent_delta,
+            left,
+            break_left,
+        });
+
+        if !sep_is_lit && i > 0 {
+            state.stack.push(PrintItem {
+                doc: sep,
+                indent_delta: state.indent_delta,
+                left: None,
+                break_left,
+            });
+        }
+    }
+}
+
+fn handle_n_docs<'a>(docs: &[&'a Doc<'a>], state: &mut PrintState<'a>, printer: &mut Printer) {
+    let mut all_literal = true;
+    let mut last_non_literal = docs.len();
+
+    for (i, doc) in docs.iter().enumerate() {
+        if !is_literal_doc(doc) {
+            all_literal = false;
+            last_non_literal = i;
+            break;
+        }
+    }
+
+    if all_literal {
+        for doc in docs {
+            handle_literal(doc, state, printer);
+        }
+    } else {
+        for (i, doc) in docs.iter().rev().enumerate() {
+            let i = docs.len() - i - 1;
+
+            if i < last_non_literal {
+                handle_literal(doc, state, printer);
             } else {
-                Some(PrintItem {
-                    doc: d,
-                    indent_delta,
-                    tmp_output_span: None,
-                })
+                state.stack.push(PrintItem {
+                    doc,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
             }
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
+        }
+    }
+}
+
+fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) {
+    match doc {
+        Doc::DoubleDoc(doc1, doc2) => {
+            let doc1_is_lit = is_literal_doc(doc1);
+            let doc2_is_lit = is_literal_doc(doc2);
+
+            if doc1_is_lit && doc2_is_lit {
+                handle_literal(doc1, state, printer);
+                handle_literal(doc2, state, printer);
+            } else if doc1_is_lit && !doc2_is_lit {
+                handle_literal(doc1, state, printer);
+
+                state.stack.push(PrintItem {
+                    doc: doc2,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+            } else {
+                state.stack.push(PrintItem {
+                    doc: doc2,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+
+                state.stack.push(PrintItem {
+                    doc: doc1,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+            }
+        }
+
+        Doc::TripleDoc(doc1, doc2, doc3) => {
+            let doc3_is_lit = is_literal_doc(doc3);
+            let doc2_is_lit = is_literal_doc(doc2);
+            let doc1_is_lit = is_literal_doc(doc1);
+
+            if doc1_is_lit && doc2_is_lit && doc3_is_lit {
+                handle_literal(doc1, state, printer);
+                handle_literal(doc2, state, printer);
+                handle_literal(doc3, state, printer);
+            } else if doc1_is_lit && doc2_is_lit && !doc3_is_lit {
+                handle_literal(doc1, state, printer);
+                handle_literal(doc2, state, printer);
+
+                state.stack.push(PrintItem {
+                    doc: doc3,
+                    indent_delta: state.indent_delta,
+
+                    left: None,
+                    break_left: 0,
+                });
+            } else if doc1_is_lit && !doc2_is_lit && !doc3_is_lit {
+                handle_literal(doc1, state, printer);
+
+                state.stack.push(PrintItem {
+                    doc: doc3,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+
+                state.stack.push(PrintItem {
+                    doc: doc2,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+            } else {
+                state.stack.push(PrintItem {
+                    doc: doc3,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+
+                state.stack.push(PrintItem {
+                    doc: doc2,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+
+                state.stack.push(PrintItem {
+                    doc: doc1,
+                    indent_delta: state.indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+            }
+        }
+        _ => {
+            unreachable!()
+        }
+    }
 }
 
 /// Core pretty printing function.
-/// Takes a document and a printer configuration and returns a String.
+///
+/// Takes a document and an optional printer configuration and returns a String.
 /// Uses a stack to avoid recursion, keeping track of the current line length,
 /// and indent level.
 pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
     let doc = doc.into();
 
-    let printer = printer.unwrap_or_default();
+    let mut printer = printer.unwrap_or_default();
 
-    let mut stack = VecDeque::with_capacity(8);
-    // let mut tmp_stack = Vec::with_capacity(8);
+    let mut state = PrintState {
+        stack: Vec::with_capacity(64),
+        output: Vec::with_capacity(1024),
 
-    stack.push_back(PrintItem {
+        current_line_len: 0,
+        indent_delta: 0,
+
+        space_cache: Vec::new(),
+        join_breaks: Vec::new(),
+    };
+
+    state.stack.push(PrintItem {
         doc: &doc,
         indent_delta: 0,
-        tmp_output_span: None,
+        left: None,
+        break_left: 0,
     });
-
-    let mut output = Vec::new();
-    let tmp_output = Rc::new(RefCell::new(Vec::new()));
-
-    let mut prev_len = 0;
-    let mut current_line_len = 0;
-
-    let space = (if printer.use_tabs { "\t" } else { " " }).as_bytes();
-
-    let add_hardline = |output: &mut Vec<u8>, indent_delta: usize| {
-        let space = space.repeat(indent_delta);
-
-        writeln!(output).unwrap();
-        output.extend_from_slice(&space);
-
-        (space.len(), indent_delta)
-    };
 
     while let Some(PrintItem {
         doc,
         indent_delta,
-        tmp_output_span,
-    }) = stack.pop_back()
+        left,
+        break_left,
+    }) = state.stack.pop()
     {
-        if let Some((start, end)) = tmp_output_span {
-            current_line_len += add_bytes(&mut output, &tmp_output.borrow()[start..end]);
+        if let Some(left) = left {
+            handle_literal(left, &mut state, &mut printer);
+        }
+        if break_left > 0 {
+            state.current_line_len = append_line(&mut state, &mut printer);
+        }
+
+        let (doc, indent_delta) = match doc {
+            Doc::Indent(d) => (d.as_ref(), indent_delta.saturating_add(printer.indent)),
+            Doc::Dedent(d) => (d.as_ref(), indent_delta.saturating_sub(printer.indent)),
+            _ => (doc, indent_delta),
         };
 
-        match &doc {
+        state.indent_delta = indent_delta;
+
+        match doc {
             Doc::Concat(docs) => {
-                for d in collapse_bytes_streak(tmp_output.clone(), docs, indent_delta) {
-                    stack.push_back(d);
-                }
-
-                prev_len = tmp_output.borrow().len();
-            }
-
-            Doc::Group(d) => {
-                let needs_breaking = count_text_length(d, &printer) > printer.max_width;
-
-                if needs_breaking {
-                    push_hardline(&mut stack, indent_delta.saturating_sub(printer.indent));
-                }
-
-                stack.push_back(PrintItem {
-                    doc: d,
-                    indent_delta,
-                    tmp_output_span: None,
-                });
-
-                if needs_breaking {
-                    push_hardline(&mut stack, indent_delta);
-                }
-            }
-
-            Doc::IfBreak(doc, other) => {
-                let mut is_or_was_broken = false;
-                if let Some(last) = stack.back() {
-                    is_or_was_broken =
-                        matches!(last.doc, &Doc::Hardline) || matches!(last.doc, &Doc::Softline);
-                }
-
-                let d = if is_or_was_broken { doc } else { other };
-
-                stack.push_back(PrintItem {
-                    doc: d,
-                    indent_delta,
-                    tmp_output_span: None,
-                });
-            }
-
-            Doc::Indent(d) => {
-                stack.push_back(PrintItem {
-                    doc: d,
-                    indent_delta: indent_delta.saturating_add(printer.indent),
-                    tmp_output_span: None,
-                });
-            }
-
-            Doc::Dedent(d) => {
-                stack.push_back(PrintItem {
-                    doc: d,
-                    indent_delta: indent_delta.saturating_sub(printer.indent),
-                    tmp_output_span: None,
-                });
-            }
-
-            Doc::Join(sep, docs) | Doc::SmartJoin(sep, docs) => {
-                let breaks = match doc {
-                    Doc::Join(_, _) => None,
-                    Doc::SmartJoin(_, _) => Some(smart_join_breaks(sep, docs, &printer)),
-                    _ => unreachable!(),
-                };
-
-                for (i, d) in docs.iter().rev().enumerate() {
-                    let i = docs.len() - i - 1;
-
-                    stack.push_back(PrintItem {
+                for d in docs.iter().rev() {
+                    state.stack.push(PrintItem {
                         doc: d,
                         indent_delta,
-                        tmp_output_span: None,
+                        left: None,
+                        break_left: 0,
                     });
-
-                    if i > 0 {
-                        if let Some(breaks) = &breaks
-                            && breaks.contains(&i)
-                        {
-                            push_hardline(&mut stack, indent_delta);
-                        }
-                        stack.push_back(PrintItem {
-                            doc: sep,
-                            indent_delta,
-                            tmp_output_span: None,
-                        });
-                    }
                 }
             }
-
-            Doc::Line => {
-                current_line_len = 0;
-                writeln!(output).unwrap();
+            Doc::Group(d) => {
+                let needs_breaking = count_text_length(d, &printer) > printer.max_width;
+                if needs_breaking {
+                    state.stack.push(PrintItem {
+                        doc: &Doc::Hardline,
+                        indent_delta: indent_delta.saturating_sub(printer.indent),
+                        left: None,
+                        break_left: 0,
+                    });
+                }
+                state.stack.push(PrintItem {
+                    doc: d,
+                    indent_delta,
+                    left: None,
+                    break_left: if needs_breaking { indent_delta } else { 0 },
+                });
+            }
+            Doc::IfBreak(doc, other) => {
+                let is_or_was_broken = state.stack.last().map_or(false, |last| {
+                    matches!(last.doc, &Doc::Hardline | &Doc::Softline)
+                });
+                let doc = if is_or_was_broken { doc } else { other };
+                state.stack.push(PrintItem {
+                    doc,
+                    indent_delta,
+                    left: None,
+                    break_left: 0,
+                });
+            }
+            Doc::Join(sep, docs) | Doc::SmartJoin(sep, docs) => {
+                handle_join(doc, sep, docs, &mut state, &mut printer);
             }
 
-            Doc::Hardline => {
-                current_line_len = add_hardline(&mut output, indent_delta).0;
+            Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
+                handle_n_docs_unrolled(doc, &mut state, &mut printer);
             }
-
-            Doc::Mediumline if current_line_len > printer.max_width / 2 => {
-                current_line_len = add_hardline(&mut output, indent_delta).0;
+            _ => {
+                handle_literal(doc, &mut state, &mut printer);
             }
-
-            Doc::Softline if current_line_len > printer.max_width => {
-                current_line_len = add_hardline(&mut output, indent_delta).0;
-            }
-
-            _ if tmp_output_span.is_none() => {
-                current_line_len += add_bytes_from_doc(&mut output, doc).0;
-            }
-            _ => {}
         }
     }
 
-    add_bytes(&mut output, &tmp_output.borrow()[prev_len..]);
-
-    String::from_utf8(output).unwrap()
+    unsafe { String::from_utf8_unchecked(state.output) }
 }
 
 #[derive(Debug, Clone)]
@@ -321,7 +632,7 @@ pub struct Printer {
 
 /// Default printer configuration.
 pub const PRINTER: Printer = Printer {
-    max_width: 32,
+    max_width: 80,
     indent: 4,
     break_long_text: false,
     use_tabs: false,

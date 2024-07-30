@@ -19,7 +19,13 @@ use std::{collections::HashSet, usize};
 /// # Returns
 ///
 /// A vector of indices that represent the end of each line in the justified text.
-pub fn text_justify(sep_length: usize, doc_lengths: &[usize], max_width: usize) -> HashSet<usize> {
+#[inline]
+pub fn text_justify(
+    sep_length: usize,
+    doc_lengths: &[usize],
+    max_width: usize,
+    output: &mut Vec<usize>,
+) {
     // Score struct to hold the "badness" and the index of the next word
     #[derive(Clone, Debug)]
     struct Score {
@@ -75,11 +81,20 @@ pub fn text_justify(sep_length: usize, doc_lengths: &[usize], max_width: usize) 
     }
 
     // Generate the list of line breaks by scanning the memoization vector
-    (0..n)
-        .scan(0, |i, _| {
-            let j = memo[*i].j;
-            *i = j;
-            Some(j)
-        })
-        .collect::<HashSet<_>>()
+    // (0..n)
+    //     .scan(0, |i, _| {
+    //         let j = memo[*i].j;
+    //         *i = j;
+    //         Some(j)
+    //     })
+    //     .collect_into(&mut output)
+
+    let mut i = 0;
+    while i < n {
+        let j = memo[i].j;
+        output.push(j);
+        i = j;
+    }
+
+   
 }
