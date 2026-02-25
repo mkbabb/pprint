@@ -1,7 +1,8 @@
 [package]
 name = "pprint"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
+rust-version = "1.80"
 license = "MIT"
 description = "Flexible and lightweight pretty printing library for Rust"
 repository = "https://github.com/mkbabb/pprint"
@@ -15,16 +16,12 @@ path = "src/lib.rs"
 
 [dependencies]
 dragonbox = "0.1.8"
-# itoa = "1.0.11"
-itoa = { git = "https://github.com/mkbabb/itoa", version = "1.0.13" }
 itoap = "1.0.1"
-jemallocator = "0.5.4"
-lazy_static = "1.5.0"
 pprint_derive = { path = "./derive", version = "0.1.0" }
-rand = "0.8.5"
-regex = "1.10.5"
-ryu = "1.0.18"
+regex = "1.11"
+
+[dev-dependencies]
+rand = "0.8"
 
 [profile.bench]
 # opt-level = 0
-

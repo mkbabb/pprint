@@ -1,15 +1,6 @@
-use lazy_static::lazy_static;
-
 use crate::doc::Doc;
 use crate::utils::text_justify;
 use crate::DigitCount;
-
-use std::collections::HashSet;
-
-use std::io::Write as _;
-use std::sync::Mutex;
-
-use std::mem::size_of;
 
 struct PrintItem<'a> {
     doc: &'a Doc<'a>,
@@ -75,7 +66,7 @@ fn is_literal_doc(doc: &Doc) -> bool {
 }
 
 #[inline(always)]
-pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Printer) -> usize {
+fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Printer) -> usize {
     if docs.is_empty() {
         return 0;
     }
@@ -87,7 +78,7 @@ pub fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Pr
 }
 
 #[inline]
-pub fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
+fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
     match doc {
         Doc::Concat(docs) => docs.iter().map(|d| count_text_length(d, printer)).sum(),
 
@@ -141,7 +132,7 @@ pub fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
 }
 
 #[inline(always)]
-pub fn smart_join_breaks<'a>(
+fn smart_join_breaks<'a>(
     sep: &'a Doc<'a>,
     docs: &'a [Doc<'a>],
 
@@ -290,7 +281,7 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         }
 
         Doc::SmallBytes(b, len) => {
-            state.output.extend_from_slice(b);
+            state.output.extend_from_slice(&b[..*len]);
             *len
         }
 
@@ -382,39 +373,6 @@ fn handle_join<'a>(
     }
 }
 
-fn handle_n_docs<'a>(docs: &[&'a Doc<'a>], state: &mut PrintState<'a>, printer: &mut Printer) {
-    let mut all_literal = true;
-    let mut last_non_literal = docs.len();
-
-    for (i, doc) in docs.iter().enumerate() {
-        if !is_literal_doc(doc) {
-            all_literal = false;
-            last_non_literal = i;
-            break;
-        }
-    }
-
-    if all_literal {
-        for doc in docs {
-            handle_literal(doc, state, printer);
-        }
-    } else {
-        for (i, doc) in docs.iter().rev().enumerate() {
-            let i = docs.len() - i - 1;
-
-            if i < last_non_literal {
-                handle_literal(doc, state, printer);
-            } else {
-                state.stack.push(PrintItem {
-                    doc,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
-            }
-        }
-    }
-}
 
 fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) {
     match doc {
@@ -595,7 +553,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                 });
             }
             Doc::IfBreak(doc, other) => {
-                let is_or_was_broken = state.stack.last().map_or(false, |last| {
+                let is_or_was_broken = state.stack.last().is_some_and(|last| {
                     matches!(last.doc, &Doc::Hardline | &Doc::Softline)
                 });
                 let doc = if is_or_was_broken { doc } else { other };

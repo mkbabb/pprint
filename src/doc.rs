@@ -1,10 +1,6 @@
-use std::fmt::{Debug, Display};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::mem::{size_of, transmute, MaybeUninit};
-use std::{
-    borrow::Cow,
-    collections::{HashMap, HashSet},
-};
 
 use regex::Regex;
 
@@ -14,6 +10,7 @@ const BYTES_SIZE: usize = 24;
 /// A Document that can be pretty printed
 /// Represents the different ways wherein a doc can be printed
 #[derive(Debug, Clone)]
+#[allow(non_camel_case_types)]
 pub enum Doc<'a> {
     Null,
 
@@ -302,29 +299,6 @@ macro_rules! impl_from_number_to_doc {
 }
 impl_from_number_to_doc!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64);
 
-// macro for the integral types, calling the above fn and returning format_bytes:
-macro_rules! impl_from_integral_number_to_doc {
-    ($($t:ident),*) => {
-        $(
-            impl<'a> From<$t> for Doc<'a> {
-                fn from(value: $t) -> Self {
-                    let mut output = [0u8; BYTES_SIZE];
-
-                    // let len = unsafe { itoa::raw::format(value, output.as_mut_ptr()) };
-                    unsafe {
-                        itoap::write_to_ptr(
-                            output.as_mut_ptr()
-                        , value);
-                    }
-
-
-                    Doc::SmallBytes(output, output.len())
-                }
-            }
-        )*
-    };
-}
-// impl_from_integral_number_to_doc!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize);
 
 impl<'a, T> From<Option<T>> for Doc<'a>
 where

@@ -1,4 +1,3 @@
-use std::{collections::HashSet, usize};
 
 /// Text justification algorithm inspired by LaTeX's text justification algorithm.
 ///

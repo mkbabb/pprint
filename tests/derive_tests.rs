@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use pprint::print;
-    use pprint::{concat, join, pprint, Doc, Group, Indent, Pretty, Printer, Wrap};
+    use pprint::{join, pprint, Doc, Pretty, Wrap};
 
     use std::collections::HashMap;
     use std::fmt::Debug;
-    use std::fmt::Display;
 
     #[derive(Pretty, Debug)]
     #[pprint(verbose)]
