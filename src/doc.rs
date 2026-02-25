@@ -434,12 +434,11 @@ where
             .collect();
 
         if !doc_vec.is_empty() {
-            let doc = doc_vec
+            doc_vec
                 .join(Doc::from(", ") + Doc::Hardline)
                 .group()
                 .wrap("{", "}")
-                .indent();
-            doc
+                .indent()
         } else {
             Doc::from("{}")
         }
@@ -454,8 +453,7 @@ where
         let doc_vec: Vec<_> = set.into_iter().map(|item| item.into()).collect();
 
         if !doc_vec.is_empty() {
-            let doc = doc_vec.join(", ").group().wrap("{", "}").indent();
-            doc
+            doc_vec.join(", ").group().wrap("{", "}").indent()
         } else {
             Doc::from("{}")
         }
