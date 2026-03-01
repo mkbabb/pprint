@@ -1,8 +1,8 @@
 # `pprint`
 
-A Rust library for pretty ✨ printing using a document model. Automatically derive
+A Rust library for pretty printing using a document model. Automatically derive
 `Pretty` for structs, enums, and primitive types; vector and map types are also
-supported by default; very similar to the `derive(Debug)` macro, just prettier ✨ and more
+supported by default; very similar to the `derive(Debug)` macro, just prettier and more
 configurable.
 
 ## Usage
@@ -100,29 +100,16 @@ For more information on the algorithm in particular, see the above's heavily com
 
 ## Performance
 
-Several optimizations have been made to avoid unnecessary allocations and copying, but the library is still not as fast as `std::fmt::Debug`. This is mainly due to the document model's generality, but more optimizations are planned for the future (if I can figure it out 😅).
+Throughput varies by workload—leaf-heavy documents (integers, strings) are close to `Debug`, while `smart_join` adds DP overhead for optimal line breaking.
 
-On average, `pprint` is anywhere from `0.25-3x` slower than `Debug`, especially if using `smart_join` (which, I think just looks nicer normally):
-
-#### Formatting a 100 nested vectors of 100 floats each
-
-##### `smart_join`
-
-```shell
-test bench_pprint_medium_vector ... bench:   1,303,418 ns/iter (+/- 24,732)
-```
-
-##### `join`
-
-```shell
-test bench_pprint_medium_vector ... bench:     646,447 ns/iter (+/- 13,639)
-```
-
-##### `std::fmt::Debug`
-
-```shell
-test bench_debug_medium_vector  ... bench:     459,229 ns/iter (+/- 24,587)
-```
+| Benchmark | pprint (ns) | Debug (ns) | Ratio |
+|-----------|-------------|------------|-------|
+| flat_vec_1k (ints) | 65,874 | 21,171 | 3.1x |
+| flat_vec_10k (ints) | 628,306 | 217,838 | 2.9x |
+| nested_100x100 | 697,764 | 333,457 | 2.1x |
+| floats_1k | 63,823 | 68,056 | 0.94x |
+| strings_1k | 125,788 | 45,932 | 2.7x |
+| tuples_1k | 384,797 | 153,782 | 2.5x |
 
 See the [benches](benches) directory for more information.
 

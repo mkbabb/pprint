@@ -26,7 +26,7 @@ pub fn text_justify(
     output: &mut Vec<usize>,
 ) {
     // Score struct to hold the "badness" and the index of the next word
-    #[derive(Clone, Debug)]
+    #[derive(Clone, Copy, Debug)]
     struct Score {
         badness: usize,
         j: usize,
@@ -62,7 +62,7 @@ pub fn text_justify(
             // Calculate the badness as the cube of the unused space at the end of the line
             let badness = (max_width - line_length).pow(3);
             // Get the score of the next word
-            let next_score = memo[j + 1].clone();
+            let next_score = memo[j + 1];
 
             // If the total badness of this line and the next is less than the current badness,
             // update the score for this word

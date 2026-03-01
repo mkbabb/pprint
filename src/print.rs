@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::doc::Doc;
 use crate::utils::text_justify;
 use crate::DigitCount;
@@ -19,6 +21,8 @@ struct PrintState<'a> {
 
     space_cache: Vec<u8>,
     join_breaks: Vec<usize>,
+    doc_lengths: Vec<usize>,
+    text_length_cache: HashMap<*const Doc<'a>, usize>,
 }
 
 #[inline(always)]
@@ -66,32 +70,52 @@ fn is_literal_doc(doc: &Doc) -> bool {
 }
 
 #[inline(always)]
-fn count_join_length<'a>(sep: &'a Doc<'a>, docs: &'a [Doc<'a>], printer: &Printer) -> usize {
+fn count_join_length<'a>(
+    sep: &'a Doc<'a>,
+    docs: &'a [Doc<'a>],
+    printer: &Printer,
+    cache: &mut HashMap<*const Doc<'a>, usize>,
+) -> usize {
     if docs.is_empty() {
         return 0;
     }
 
-    let doc_len: usize = docs.iter().map(|d| count_text_length(d, printer)).sum();
-    let sep_len = count_text_length(sep, printer);
+    let doc_len: usize = docs
+        .iter()
+        .map(|d| count_text_length(d, printer, cache))
+        .sum();
+    let sep_len = count_text_length(sep, printer, cache);
 
     doc_len + sep_len * (docs.len() - 1)
 }
 
 #[inline]
-fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
-    match doc {
-        Doc::Concat(docs) => docs.iter().map(|d| count_text_length(d, printer)).sum(),
+fn count_text_length<'a>(
+    doc: &'a Doc<'a>,
+    printer: &Printer,
+    cache: &mut HashMap<*const Doc<'a>, usize>,
+) -> usize {
+    let key = doc as *const _;
+    if let Some(&len) = cache.get(&key) {
+        return len;
+    }
+    let len = match doc {
+        Doc::Concat(docs) => docs
+            .iter()
+            .map(|d| count_text_length(d, printer, cache))
+            .sum(),
 
-        Doc::Group(d) => count_text_length(d, printer),
+        Doc::Group(d) => count_text_length(d, printer, cache),
 
-        Doc::Indent(d) => count_text_length(d, printer).saturating_add(printer.indent),
-        Doc::Dedent(d) => count_text_length(d, printer).saturating_sub(printer.indent),
+        Doc::Indent(d) => count_text_length(d, printer, cache).saturating_add(printer.indent),
+        Doc::Dedent(d) => count_text_length(d, printer, cache).saturating_sub(printer.indent),
 
-        Doc::Join(sep, docs) => count_join_length(sep, docs, printer),
+        Doc::Join(sep, docs) => count_join_length(sep, docs, printer, cache),
 
-        Doc::SmartJoin(sep, docs) => count_join_length(sep, docs, printer),
+        Doc::SmartJoin(sep, docs) => count_join_length(sep, docs, printer, cache),
 
-        Doc::IfBreak(t, f) => count_text_length(t, printer).max(count_text_length(f, printer)),
+        Doc::IfBreak(t, f) => count_text_length(t, printer, cache)
+            .max(count_text_length(f, printer, cache)),
 
         Doc::Softline => 1,
 
@@ -125,7 +149,9 @@ fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
         Doc::f64(_) => 20,
 
         _ => 0,
-    }
+    };
+    cache.insert(key, len);
+    len
 }
 
 #[inline(always)]
@@ -138,14 +164,17 @@ fn smart_join_breaks<'a>(
 ) {
     let max_width = printer.max_width.saturating_sub(state.indent_delta);
 
-    let sep_length = count_text_length(sep, printer);
-    let doc_lengths: Vec<_> = docs.iter().map(|d| count_text_length(d, printer)).collect();
+    let sep_length = count_text_length(sep, printer, &mut state.text_length_cache);
+    state.doc_lengths.clear();
+    state
+        .doc_lengths
+        .extend(docs.iter().map(|d| count_text_length(d, printer, &mut state.text_length_cache)));
 
     // sep_length stays as-is — text_justify already accounts for separators.
 
     state.join_breaks.clear();
 
-    text_justify(sep_length, &doc_lengths, max_width, &mut state.join_breaks)
+    text_justify(sep_length, &state.doc_lengths, max_width, &mut state.join_breaks)
 }
 
 #[inline(always)]
@@ -480,15 +509,20 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
 
     let mut printer = printer.unwrap_or_default();
 
+    let mut text_length_cache = HashMap::new();
+    let estimated_output = count_text_length(&doc, &printer, &mut text_length_cache);
+
     let mut state = PrintState {
         stack: Vec::with_capacity(64),
-        output: Vec::with_capacity(1024),
+        output: Vec::with_capacity(estimated_output.max(1024)),
 
         current_line_len: 0,
         indent_delta: 0,
 
-        space_cache: Vec::new(),
+        space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
+        doc_lengths: Vec::new(),
+        text_length_cache,
     };
 
     state.stack.push(PrintItem {
@@ -532,7 +566,8 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                 }
             }
             Doc::Group(d) => {
-                let needs_breaking = count_text_length(d, &printer) > printer.max_width;
+                let needs_breaking =
+                    count_text_length(d, &printer, &mut state.text_length_cache) > printer.max_width;
                 if needs_breaking {
                     state.stack.push(PrintItem {
                         doc: &Doc::Hardline,
@@ -576,7 +611,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
     unsafe { String::from_utf8_unchecked(state.output) }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Printer {
     pub max_width: usize,
     pub indent: usize,
@@ -594,7 +629,7 @@ pub const PRINTER: Printer = Printer {
 
 impl Default for Printer {
     fn default() -> Self {
-        PRINTER.clone()
+        PRINTER
     }
 }
 
