@@ -1,113 +1,127 @@
 #![feature(test)]
 
 extern crate pprint;
-extern crate regex;
 extern crate test;
 
-use pprint::{pprint, Doc, Pretty, Printer};
-use std::collections::HashMap;
-use std::fmt::Debug;
+use pprint::{pprint, Printer};
 use test::Bencher;
 
-#[derive(Pretty, Debug, Clone)]
-#[pprint(verbose)]
-pub enum HeyEnum<'a> {
-    There(&'a str),
-    #[pprint(rename = "MyEnum::A")]
-    A,
-    B(regex::Regex),
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn create_flat_vec(n: usize) -> Vec<usize> {
+    (0..n).collect()
 }
 
-#[derive(Pretty, Debug, Clone)]
-#[pprint(verbose, rename = "Inner")]
-pub struct InnerStrumct<'a> {
-    x: &'a str,
-    y: HeyEnum<'a>,
-    z: (usize, usize),
+fn create_nested_vec(outer: usize, inner: usize) -> Vec<Vec<usize>> {
+    (0..outer).map(|_| (0..inner).collect()).collect()
 }
 
-#[derive(Pretty, Debug, Clone)]
-#[pprint(verbose)]
-pub struct Strumct<'a> {
-    a: Vec<usize>,
-    b: HashMap<String, HeyEnum<'a>>,
-    c: InnerStrumct<'a>,
-    #[pprint(ignore)]
-    no: usize,
+fn create_float_vec(n: usize) -> Vec<f64> {
+    (0..n).map(|i| (i as f64) * 1.23456789 + 0.001).collect()
 }
 
-// Helper function to create a Strumct with a vector of given size
-fn create_strumct(vec_size: usize) -> Strumct<'static> {
-    let a = (1..=vec_size).collect();
-    let mut b = HashMap::new();
-    b.insert("hello".to_string(), HeyEnum::There("there"));
-    b.insert("a".to_string(), HeyEnum::A);
-    b.insert(
-        "b".to_string(),
-        HeyEnum::B(regex::Regex::new(".*").unwrap()),
-    );
-    Strumct {
-        a,
-        b,
-        c: InnerStrumct {
-            x: "hello",
-            y: HeyEnum::There("there"),
-            z: (1, 2),
-        },
-        no: 0,
-    }
+fn create_string_vec(n: usize) -> Vec<String> {
+    (0..n)
+        .map(|i| format!("item_{:04}: the quick brown fox jumps over the lazy dog", i))
+        .collect()
 }
 
-// Helper function to create a Strumct with a vector of given size
-
-fn create_vec(vec_size: usize) -> Vec<usize> {
-    (1..=vec_size).collect()
+fn create_mixed_tuples(n: usize) -> Vec<(usize, f64)> {
+    (0..n).map(|i| (i, i as f64 * 3.14159)).collect()
 }
 
-use std::fmt::Write as _;
-use std::io::Write as _;
+// ── pprint benchmarks ────────────────────────────────────────────────────────
 
-// Benchmark pretty-printing medium vector (1000 elements)
 #[bench]
-fn bench_pprint_medium_vector(b: &mut Bencher) {
-    // let s = create_strumct(1000);
-    // let s: Vec<_> = create_vec(100).into_iter().map(|x| x as f64).collect();
-
-    b.iter(|| {
-        let s: Vec<_> = (0..100)
-            .map(|x| {
-                create_vec(100)
-                // .into_iter()
-                // .map(|x| x as f64)
-                // .collect::<Vec<_>>()
-            })
-            .collect();
-        // for _ in 0..1000 {
-        let out = test::black_box(pprint(&s, None));
-
-        // }
-    });
+fn bench_pprint_flat_vec_1k(b: &mut Bencher) {
+    let data = create_flat_vec(1_000);
+    b.iter(|| test::black_box(pprint(&data, None)));
 }
 
-// Benchmark Debug for medium vector (1000 elements)
 #[bench]
-fn bench_debug_medium_vector(b: &mut Bencher) {
-    // let s = create_strumct(1000);
-    // let s: Vec<_> = create_vec(1000).into_iter().map(|x| x as f64).collect();
+fn bench_pprint_flat_vec_10k(b: &mut Bencher) {
+    let data = create_flat_vec(10_000);
+    b.iter(|| test::black_box(pprint(&data, None)));
+}
 
-    b.iter(|| {
-        let s: Vec<_> = (0..100)
-            .map(|x| {
-                create_vec(100)
-                // .into_iter()
-                // .map(|x| x as f64)
-                // .collect::<Vec<_>>()
-            })
-            .collect();
-        // let debug = format!("{:?}", s);
-        // test::black_box(debug);
-        // for _ in 0..100 {
-        let out = test::black_box(format!("{:#?}", s));
-        // }
-    });
+#[bench]
+fn bench_pprint_nested_100x100(b: &mut Bencher) {
+    let data = create_nested_vec(100, 100);
+    b.iter(|| test::black_box(pprint(&data, None)));
+}
+
+#[bench]
+fn bench_pprint_floats_1k(b: &mut Bencher) {
+    let data = create_float_vec(1_000);
+    b.iter(|| test::black_box(pprint(&data, None)));
+}
+
+#[bench]
+fn bench_pprint_strings_1k(b: &mut Bencher) {
+    let data = create_string_vec(1_000);
+    b.iter(|| test::black_box(pprint(&data, None)));
+}
+
+#[bench]
+fn bench_pprint_tuples_1k(b: &mut Bencher) {
+    let data = create_mixed_tuples(1_000);
+    b.iter(|| test::black_box(pprint(&data, None)));
+}
+
+#[bench]
+fn bench_pprint_narrow_40col(b: &mut Bencher) {
+    let data = create_nested_vec(100, 100);
+    let printer = Printer {
+        max_width: 40,
+        ..Default::default()
+    };
+    b.iter(|| test::black_box(pprint(&data, Some(printer.clone()))));
+}
+
+#[bench]
+fn bench_pprint_wide_120col(b: &mut Bencher) {
+    let data = create_nested_vec(100, 100);
+    let printer = Printer {
+        max_width: 120,
+        ..Default::default()
+    };
+    b.iter(|| test::black_box(pprint(&data, Some(printer.clone()))));
+}
+
+// ── Debug benchmarks — same data, format!("{:#?}") ───────────────────────────
+
+#[bench]
+fn bench_debug_flat_vec_1k(b: &mut Bencher) {
+    let data = create_flat_vec(1_000);
+    b.iter(|| test::black_box(format!("{:#?}", data)));
+}
+
+#[bench]
+fn bench_debug_flat_vec_10k(b: &mut Bencher) {
+    let data = create_flat_vec(10_000);
+    b.iter(|| test::black_box(format!("{:#?}", data)));
+}
+
+#[bench]
+fn bench_debug_nested_100x100(b: &mut Bencher) {
+    let data = create_nested_vec(100, 100);
+    b.iter(|| test::black_box(format!("{:#?}", data)));
+}
+
+#[bench]
+fn bench_debug_floats_1k(b: &mut Bencher) {
+    let data = create_float_vec(1_000);
+    b.iter(|| test::black_box(format!("{:#?}", data)));
+}
+
+#[bench]
+fn bench_debug_strings_1k(b: &mut Bencher) {
+    let data = create_string_vec(1_000);
+    b.iter(|| test::black_box(format!("{:#?}", data)));
+}
+
+#[bench]
+fn bench_debug_tuples_1k(b: &mut Bencher) {
+    let data = create_mixed_tuples(1_000);
+    b.iter(|| test::black_box(format!("{:#?}", data)));
 }

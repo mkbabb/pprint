@@ -89,14 +89,11 @@ fn count_text_length<'a>(doc: &'a Doc<'a>, printer: &Printer) -> usize {
 
         Doc::Join(sep, docs) => count_join_length(sep, docs, printer),
 
-        Doc::SmartJoin(sep, docs) => {
-            let len = count_join_length(sep, docs, printer);
-            len.min(len + printer.max_width)
-        }
+        Doc::SmartJoin(sep, docs) => count_join_length(sep, docs, printer),
 
         Doc::IfBreak(t, f) => count_text_length(t, printer).max(count_text_length(f, printer)),
 
-        Doc::Softline => printer.max_width / 2,
+        Doc::Softline => 1,
 
         Doc::Hardline | Doc::Line => printer.max_width,
 
@@ -139,13 +136,12 @@ fn smart_join_breaks<'a>(
     state: &mut PrintState<'a>,
     printer: &mut Printer,
 ) {
-    let max_width = (printer.max_width / 4).max(2);
+    let max_width = printer.max_width.saturating_sub(state.indent_delta);
 
     let sep_length = count_text_length(sep, printer);
     let doc_lengths: Vec<_> = docs.iter().map(|d| count_text_length(d, printer)).collect();
 
-    // Align the separator with the longest doc length:
-    let sep_length = sep_length + sep_length.max(doc_lengths.iter().max().copied().unwrap_or(0));
+    // sep_length stays as-is — text_justify already accounts for separators.
 
     state.join_breaks.clear();
 
