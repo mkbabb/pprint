@@ -58,26 +58,26 @@ pub fn text_justify(
             if j > i {
                 line_length += sep_length;
             }
-            // Ensure that the line length does not exceed the maximum width
-            line_length = line_length.min(max_width);
-
-            // Calculate the badness as the cube of the unused space at the end of the line.
-            // Use saturating arithmetic to prevent overflow on large widths.
-            let badness = (max_width - line_length).saturating_pow(3);
-            // Get the score of the next word
+            // Calculate badness: overflow is heavily penalized, underflow uses cube.
+            let badness = if line_length > max_width {
+                // Overflow penalty — much worse than any fitting arrangement.
+                // Still compute so that fewer-overflow options win over more-overflow.
+                let overflow = line_length - max_width;
+                usize::MAX / 2 + overflow.saturating_pow(3)
+            } else {
+                (max_width - line_length).saturating_pow(3)
+            };
             let next_score = memo[j + 1];
 
-            // If the total badness of this line and the next is less than the current badness,
-            // update the score for this word
             let total_badness = badness.saturating_add(next_score.badness);
-            if total_badness < memo[i].badness {
+            if total_badness <= memo[i].badness {
                 memo[i] = Score {
                     badness: total_badness,
                     j: j + 1,
                 };
             }
-            // If the line length has reached the maximum width, break the loop
-            if line_length >= max_width {
+            // Once past max_width, adding more items only makes it worse.
+            if line_length > max_width {
                 break;
             }
         }

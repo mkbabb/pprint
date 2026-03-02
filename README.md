@@ -38,7 +38,6 @@ The `Printer` handles pretty printing a `Doc` to a string with configurable opti
 
 -   `max_width` - maximum width of each line
 -   `indent` - number of spaces for each indentation level
--   `break_long_text` - insert line breaks for long text
 -   `use_tabs` - use tabs instead of spaces for indentation
 
 ## Derive Macro

@@ -131,8 +131,9 @@ fn count_text_length<'a>(
 
         Doc::SmartJoin(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
 
-        Doc::IfBreak(t, f) => count_text_length(t, printer, cache)
-            .max(count_text_length(f, printer, cache)),
+        // Use the "fits" branch for width calculation — we're measuring
+        // whether the enclosing Group fits inline (break_mode=false).
+        Doc::IfBreak(_t, f) => count_text_length(f, printer, cache),
 
         Doc::Softline => 1,
 
@@ -277,7 +278,11 @@ fn append_line(state: &mut PrintState, printer: &mut Printer) -> usize {
         }
     }
 
-    state.output.extend_from_slice(&space_cache[..indent_delta]);
+    // space_cache layout: ['\n', ' ', ' ', ' ', ...] — index 0 is the newline,
+    // indices 1..=indent_delta are indent spaces.  Output indent_delta + 1 bytes
+    // to get newline + indent_delta spaces.
+    let output_len = indent_delta + 1;
+    state.output.extend_from_slice(&space_cache[..output_len]);
 
     indent_delta
 }
@@ -515,6 +520,10 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
             handle_literal(left, &mut state, &mut printer);
         }
         if break_left > 0 {
+            // Strip trailing whitespace before the line break.
+            while state.output.last() == Some(&b' ') || state.output.last() == Some(&b'\t') {
+                state.output.pop();
+            }
             state.current_line_len = append_line(&mut state, &mut printer);
         }
 
@@ -543,20 +552,14 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                     count_text_length(d, &printer, &mut state.text_length_cache);
                 let needs_breaking =
                     state.current_line_len.saturating_add(group_width) > printer.max_width;
-                if needs_breaking {
-                    state.stack.push(PrintItem {
-                        doc: &Doc::Hardline,
-                        indent_delta: indent_delta.saturating_sub(printer.indent),
-                        left: None,
-                        break_left: 0,
-                        break_mode: needs_breaking,
-                    });
-                }
+                // Standard Wadler-Lindig: Group only sets break_mode for children.
+                // IfBreak docs inside the Group handle actual line breaking.
+                // No automatic leading break or trailing Hardline.
                 state.stack.push(PrintItem {
                     doc: d,
                     indent_delta,
                     left: None,
-                    break_left: if needs_breaking { indent_delta } else { 0 },
+                    break_left: 0,
                     break_mode: needs_breaking,
                 });
             }
