@@ -42,7 +42,6 @@ pub enum Doc<'a> {
 
     DoubleDoc(Box<Doc<'a>>, Box<Doc<'a>>),
     TripleDoc(Box<Doc<'a>>, Box<Doc<'a>>, Box<Doc<'a>>),
-    QuadDoc(Box<Doc<'a>>, Box<Doc<'a>>, Box<Doc<'a>>, Box<Doc<'a>>),
 
     Concat(Vec<Doc<'a>>),
 
@@ -51,14 +50,10 @@ pub enum Doc<'a> {
     Indent(Box<Doc<'a>>),
     Dedent(Box<Doc<'a>>),
 
-    Join(Box<Doc<'a>>, Vec<Doc<'a>>),
-    SmartJoin(Box<Doc<'a>>, Vec<Doc<'a>>),
+    Join(Box<(Doc<'a>, Vec<Doc<'a>>)>),
+    SmartJoin(Box<(Doc<'a>, Vec<Doc<'a>>)>),
 
     IfBreak(Box<Doc<'a>>, Box<Doc<'a>>),
-
-    Trim,
-
-    HardlineDoc(Box<Doc<'a>>),
 
     Hardline,
     Softline,
@@ -76,8 +71,11 @@ impl<'a> std::ops::Add for Doc<'a> {
                 Doc::Concat(docs)
             }
             (s, Doc::Concat(mut docs)) => {
-                docs.insert(0, s);
-                Doc::Concat(docs)
+                // Prepend via a fresh Vec to avoid O(n) insert(0) shift.
+                let mut new_docs = Vec::with_capacity(docs.len() + 1);
+                new_docs.push(s);
+                new_docs.append(&mut docs);
+                Doc::Concat(new_docs)
             }
             (s, other) => Doc::Concat(vec![s, other]),
         }
@@ -136,20 +134,22 @@ pub fn group<'a>(doc: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
 }
 
 /// Concatenate a vector of documents into a single document.
-pub fn concat<'a>(docs: Vec<impl Into<Doc<'a>> + Clone>) -> Doc<'a> {
-    match docs.len() {
+pub fn concat<'a>(docs: Vec<impl Into<Doc<'a>>>) -> Doc<'a> {
+    let len = docs.len();
+    let mut iter = docs.into_iter();
+    match len {
         0 => Doc::Null,
-        1 => docs[0].clone().into(),
+        1 => iter.next().unwrap().into(),
         2 => Doc::DoubleDoc(
-            Box::new(docs[0].clone().into()),
-            Box::new(docs[1].clone().into()),
+            Box::new(iter.next().unwrap().into()),
+            Box::new(iter.next().unwrap().into()),
         ),
         3 => Doc::TripleDoc(
-            Box::new(docs[0].clone().into()),
-            Box::new(docs[1].clone().into()),
-            Box::new(docs[2].clone().into()),
+            Box::new(iter.next().unwrap().into()),
+            Box::new(iter.next().unwrap().into()),
+            Box::new(iter.next().unwrap().into()),
         ),
-        _ => Doc::Concat(docs.iter().map(Doc::from).collect()),
+        _ => Doc::Concat(iter.map(Into::into).collect()),
     }
 }
 
@@ -168,7 +168,7 @@ pub fn wrap<'a>(
 
 /// Join a vector of documents on a separator.
 pub fn join<'a>(sep: impl Into<Doc<'a>> + Clone, docs: Vec<impl Into<Doc<'a>> + Clone>) -> Doc<'a> {
-    Doc::Join(Box::new(sep.into()), docs.iter().map(Doc::from).collect())
+    Doc::Join(Box::new((sep.into(), docs.iter().map(Doc::from).collect())))
 }
 
 /// Join a vector of documents on a separator if the result fits the page,
@@ -180,7 +180,7 @@ pub fn smart_join<'a>(
     sep: impl Into<Doc<'a>> + Clone,
     docs: Vec<impl Into<Doc<'a>> + Clone>,
 ) -> Doc<'a> {
-    Doc::SmartJoin(Box::new(sep.into()), docs.iter().map(Doc::from).collect())
+    Doc::SmartJoin(Box::new((sep.into(), docs.iter().map(Doc::from).collect())))
 }
 
 /// Indent a document by one level.
@@ -401,7 +401,7 @@ where
 {
     fn from(vec: Vec<T>) -> Doc<'a> {
         if !vec.is_empty() {
-            // join(Doc::HardlineDoc(Doc::from(", ").into()), vec)
+            // join with hardline separator
             // join(Doc::from(", "), vec)
             //     .group()
             //     .wrap("[", "]")

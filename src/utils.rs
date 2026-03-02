@@ -18,29 +18,31 @@
 /// # Returns
 ///
 /// A vector of indices that represent the end of each line in the justified text.
+/// Score struct to hold the "badness" and the index of the next word
+#[derive(Clone, Copy, Debug)]
+pub struct Score {
+    pub badness: usize,
+    pub j: usize,
+}
+
 #[inline]
 pub fn text_justify(
     sep_length: usize,
     doc_lengths: &[usize],
     max_width: usize,
     output: &mut Vec<usize>,
+    memo: &mut Vec<Score>,
 ) {
-    // Score struct to hold the "badness" and the index of the next word
-    #[derive(Clone, Copy, Debug)]
-    struct Score {
-        badness: usize,
-        j: usize,
-    }
-
     // Initialize memoization vector with maximum badness and the index of the next word
     let n = doc_lengths.len();
-    let mut memo = vec![
+    memo.clear();
+    memo.resize(
+        n + 1,
         Score {
             badness: usize::MAX,
-            j: n
-        };
-        n + 1
-    ];
+            j: n,
+        },
+    );
     // The last word has no badness and does not point to any next word
     memo[n] = Score { badness: 0, j: 0 };
 
@@ -59,16 +61,18 @@ pub fn text_justify(
             // Ensure that the line length does not exceed the maximum width
             line_length = line_length.min(max_width);
 
-            // Calculate the badness as the cube of the unused space at the end of the line
-            let badness = (max_width - line_length).pow(3);
+            // Calculate the badness as the cube of the unused space at the end of the line.
+            // Use saturating arithmetic to prevent overflow on large widths.
+            let badness = (max_width - line_length).saturating_pow(3);
             // Get the score of the next word
             let next_score = memo[j + 1];
 
             // If the total badness of this line and the next is less than the current badness,
             // update the score for this word
-            if badness + next_score.badness < memo[i].badness {
+            let total_badness = badness.saturating_add(next_score.badness);
+            if total_badness < memo[i].badness {
                 memo[i] = Score {
-                    badness: badness + next_score.badness,
+                    badness: total_badness,
                     j: j + 1,
                 };
             }

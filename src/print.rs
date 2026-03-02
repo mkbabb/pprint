@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::doc::Doc;
-use crate::utils::text_justify;
+use crate::utils::{text_justify, Score};
 use crate::DigitCount;
 
 struct PrintItem<'a> {
@@ -10,6 +10,23 @@ struct PrintItem<'a> {
 
     left: Option<&'a Doc<'a>>,
     break_left: usize,
+
+    /// Whether the enclosing Group decided to break.
+    /// Set by Group when it decides `needs_breaking`, read by IfBreak.
+    break_mode: bool,
+}
+
+impl<'a> PrintItem<'a> {
+    #[inline(always)]
+    fn new(doc: &'a Doc<'a>, indent_delta: usize) -> Self {
+        Self {
+            doc,
+            indent_delta,
+            left: None,
+            break_left: 0,
+            break_mode: false,
+        }
+    }
 }
 
 struct PrintState<'a> {
@@ -22,6 +39,7 @@ struct PrintState<'a> {
     space_cache: Vec<u8>,
     join_breaks: Vec<usize>,
     doc_lengths: Vec<usize>,
+    memo_buffer: Vec<Score>,
     text_length_cache: HashMap<*const Doc<'a>, usize>,
 }
 
@@ -63,7 +81,6 @@ fn is_literal_doc(doc: &Doc) -> bool {
         Doc::TripleDoc(doc1, doc2, doc3) => {
             is_literal_doc(doc1) && is_literal_doc(doc2) && is_literal_doc(doc3)
         }
-        Doc::HardlineDoc(doc) => is_literal_doc(doc),
         // Doc::Concat(docs) => docs.iter().all(is_literal),
         _ => is_literal(doc),
     }
@@ -110,9 +127,9 @@ fn count_text_length<'a>(
         Doc::Indent(d) => count_text_length(d, printer, cache).saturating_add(printer.indent),
         Doc::Dedent(d) => count_text_length(d, printer, cache).saturating_sub(printer.indent),
 
-        Doc::Join(sep, docs) => count_join_length(sep, docs, printer, cache),
+        Doc::Join(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
 
-        Doc::SmartJoin(sep, docs) => count_join_length(sep, docs, printer, cache),
+        Doc::SmartJoin(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
 
         Doc::IfBreak(t, f) => count_text_length(t, printer, cache)
             .max(count_text_length(f, printer, cache)),
@@ -174,7 +191,7 @@ fn smart_join_breaks<'a>(
 
     state.join_breaks.clear();
 
-    text_justify(sep_length, &state.doc_lengths, max_width, &mut state.join_breaks)
+    text_justify(sep_length, &state.doc_lengths, max_width, &mut state.join_breaks, &mut state.memo_buffer)
 }
 
 #[inline(always)]
@@ -363,7 +380,7 @@ fn handle_join<'a>(
     state: &mut PrintState<'a>,
     printer: &mut Printer,
 ) {
-    if let Doc::SmartJoin(_, _) = doc {
+    if let Doc::SmartJoin(_) = doc {
         smart_join_breaks(sep, docs, state, printer);
     }
 
@@ -385,6 +402,7 @@ fn handle_join<'a>(
             indent_delta: state.indent_delta,
             left,
             break_left,
+            break_mode: false,
         });
 
         if !sep_is_lit && i > 0 {
@@ -393,6 +411,7 @@ fn handle_join<'a>(
                 indent_delta: state.indent_delta,
                 left: None,
                 break_left,
+                break_mode: false,
             });
         }
     }
@@ -411,26 +430,10 @@ fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, prin
             } else if doc1_is_lit && !doc2_is_lit {
                 handle_literal(doc1, state, printer);
 
-                state.stack.push(PrintItem {
-                    doc: doc2,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
+                state.stack.push(PrintItem::new(doc2, state.indent_delta));
             } else {
-                state.stack.push(PrintItem {
-                    doc: doc2,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
-
-                state.stack.push(PrintItem {
-                    doc: doc1,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
+                state.stack.push(PrintItem::new(doc2, state.indent_delta));
+                state.stack.push(PrintItem::new(doc1, state.indent_delta));
             }
         }
 
@@ -447,50 +450,16 @@ fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, prin
                 handle_literal(doc1, state, printer);
                 handle_literal(doc2, state, printer);
 
-                state.stack.push(PrintItem {
-                    doc: doc3,
-                    indent_delta: state.indent_delta,
-
-                    left: None,
-                    break_left: 0,
-                });
+                state.stack.push(PrintItem::new(doc3, state.indent_delta));
             } else if doc1_is_lit && !doc2_is_lit && !doc3_is_lit {
                 handle_literal(doc1, state, printer);
 
-                state.stack.push(PrintItem {
-                    doc: doc3,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
-
-                state.stack.push(PrintItem {
-                    doc: doc2,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
+                state.stack.push(PrintItem::new(doc3, state.indent_delta));
+                state.stack.push(PrintItem::new(doc2, state.indent_delta));
             } else {
-                state.stack.push(PrintItem {
-                    doc: doc3,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
-
-                state.stack.push(PrintItem {
-                    doc: doc2,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
-
-                state.stack.push(PrintItem {
-                    doc: doc1,
-                    indent_delta: state.indent_delta,
-                    left: None,
-                    break_left: 0,
-                });
+                state.stack.push(PrintItem::new(doc3, state.indent_delta));
+                state.stack.push(PrintItem::new(doc2, state.indent_delta));
+                state.stack.push(PrintItem::new(doc1, state.indent_delta));
             }
         }
         _ => {
@@ -522,6 +491,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
+        memo_buffer: Vec::new(),
         text_length_cache,
     };
 
@@ -530,6 +500,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
         indent_delta: 0,
         left: None,
         break_left: 0,
+        break_mode: false,
     });
 
     while let Some(PrintItem {
@@ -537,6 +508,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
         indent_delta,
         left,
         break_left,
+        break_mode,
     }) = state.stack.pop()
     {
         if let Some(left) = left {
@@ -562,18 +534,22 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                         indent_delta,
                         left: None,
                         break_left: 0,
+                        break_mode,
                     });
                 }
             }
             Doc::Group(d) => {
+                let group_width =
+                    count_text_length(d, &printer, &mut state.text_length_cache);
                 let needs_breaking =
-                    count_text_length(d, &printer, &mut state.text_length_cache) > printer.max_width;
+                    state.current_line_len.saturating_add(group_width) > printer.max_width;
                 if needs_breaking {
                     state.stack.push(PrintItem {
                         doc: &Doc::Hardline,
                         indent_delta: indent_delta.saturating_sub(printer.indent),
                         left: None,
                         break_left: 0,
+                        break_mode: needs_breaking,
                     });
                 }
                 state.stack.push(PrintItem {
@@ -581,22 +557,21 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                     indent_delta,
                     left: None,
                     break_left: if needs_breaking { indent_delta } else { 0 },
+                    break_mode: needs_breaking,
                 });
             }
             Doc::IfBreak(doc, other) => {
-                let is_or_was_broken = state.stack.last().is_some_and(|last| {
-                    matches!(last.doc, &Doc::Hardline | &Doc::Softline)
-                });
-                let doc = if is_or_was_broken { doc } else { other };
+                let doc = if break_mode { doc } else { other };
                 state.stack.push(PrintItem {
                     doc,
                     indent_delta,
                     left: None,
                     break_left: 0,
+                    break_mode,
                 });
             }
-            Doc::Join(sep, docs) | Doc::SmartJoin(sep, docs) => {
-                handle_join(doc, sep, docs, &mut state, &mut printer);
+            Doc::Join(inner) | Doc::SmartJoin(inner) => {
+                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer);
             }
 
             Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
@@ -608,14 +583,14 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
         }
     }
 
-    unsafe { String::from_utf8_unchecked(state.output) }
+    String::from_utf8(state.output)
+        .expect("pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8")
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Printer {
     pub max_width: usize,
     pub indent: usize,
-    pub break_long_text: bool,
     pub use_tabs: bool,
 }
 
@@ -623,7 +598,6 @@ pub struct Printer {
 pub const PRINTER: Printer = Printer {
     max_width: 80,
     indent: 4,
-    break_long_text: false,
     use_tabs: false,
 };
 
@@ -634,19 +608,16 @@ impl Default for Printer {
 }
 
 /// A builder for a printer configuration.
-/// Allows for setting the max width, indent, whether to break long text,
-/// and whether to use tabs.
+/// Allows for setting the max width, indent, and whether to use tabs.
 impl Printer {
     pub const fn new(
         max_width: usize,
         indent: usize,
-        break_long_text: bool,
         use_tabs: bool,
     ) -> Self {
         Printer {
             max_width,
             indent,
-            break_long_text,
             use_tabs,
         }
     }

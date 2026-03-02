@@ -31,7 +31,7 @@ fn parse_pretty_attrs(attrs: &[Attribute]) -> PrettyAttributes {
 
         // Parse the attribute; we don't care if this fails as we'll silently default
         let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip") {
+            if meta.path.is_ident("skip") || meta.path.is_ident("ignore") {
                 pretty_attrs.skip = true;
                 Ok(())
             } else if meta.path.is_ident("indent") {
