@@ -15,6 +15,25 @@ src/utils.rs       # text_justify DP algorithm for SmartJoin line breaking
 src/dtoa/          # fast f64→string (Schubfach algorithm)
 derive/            # pprint_derive proc macro (#[derive(Pretty)])
 
+## Dependency Graph
+
+```
+pprint_derive       (proc-macro, no external mkbabb deps)
+    ↓
+pprint              ← pprint_derive
+    ↓
+parse_that          ← pprint
+    ↓
+bbnf                ← parse_that, pprint
+    ↓
+bbnf_derive         ← bbnf, parse_that, pprint
+    ↓
+gorgeous            ← parse_that, bbnf, bbnf_derive, pprint
+```
+
+pprint is the root of the Rust crate graph. All downstream crates depend on it.
+Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses crates.io versions only.
+
 ## Conventions
 - Edition 2024, rust-version 1.85 (nightly)
 - Zero clippy warnings (`-D warnings` in CI)
