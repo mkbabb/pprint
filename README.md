@@ -40,6 +40,11 @@ The `Printer` handles pretty printing a `Doc` to a string with configurable opti
 -   `indent` - number of spaces for each indentation level
 -   `use_tabs` - use tabs instead of spaces for indentation
 
+Two entry points:
+
+-   `pprint(doc)` — consumes the `Doc` and renders to `String`
+-   `pprint_ref(&doc, printer)` — borrows the `Doc` without consuming or cloning it; useful for benchmarks and repeated renders (e.g., LSP formatting)
+
 ## Derive Macro
 
 Half of the library's development time was spent on the derive macro, allowing for easy
@@ -95,6 +100,8 @@ the [tests](tests/derive_tests.rs) file.
 
 `smart_join`'s implementation is based off the text justification algorithm: [`text_justify`](src/utils)
 
+For n <= 32 items, `text_justify` uses the full O(n^2) DP algorithm. For n > 32, it falls back to an O(n) greedy packing heuristic to avoid quadratic overhead on large join lists.
+
 For more information on the algorithm in particular, see the above's heavily commented source code, or the wonderful [Lecture No. 20](https://www.youtube.com/watch?v=ENyox7kNKeY) from MIT's 6.006 course, "Introduction to Algorithms".
 
 ## Performance
@@ -103,12 +110,12 @@ Throughput varies by workload—leaf-heavy documents (integers, strings) are clo
 
 | Benchmark | pprint (ns) | Debug (ns) | Ratio |
 |-----------|-------------|------------|-------|
-| flat_vec_1k (ints) | 65,874 | 21,171 | 3.1x |
-| flat_vec_10k (ints) | 628,306 | 217,838 | 2.9x |
-| nested_100x100 | 697,764 | 333,457 | 2.1x |
-| floats_1k | 63,823 | 68,056 | 0.94x |
-| strings_1k | 125,788 | 45,932 | 2.7x |
-| tuples_1k | 384,797 | 153,782 | 2.5x |
+| flat_vec_1k (ints) | 33,025 | 21,446 | 1.5x |
+| flat_vec_10k (ints) | 307,533 | 222,306 | 1.4x |
+| nested_100x100 | 293,817 | 327,671 | 0.90x |
+| floats_1k | 43,227 | 67,748 | 0.64x |
+| strings_1k | 109,014 | 48,582 | 2.2x |
+| tuples_1k | 270,835 | 153,970 | 1.8x |
 
 See the [benches](benches) directory for more information.
 

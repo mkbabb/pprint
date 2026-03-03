@@ -311,8 +311,19 @@ fn handle_line<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut P
 fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) {
     let offset = match doc {
         Doc::Char(c) => {
-            state.output.push(*c);
-            1
+            // Coalesce: skip space if output already ends with whitespace.
+            // Prevents opaque-span trailing whitespace from doubling with separators.
+            if *c == b' '
+                && state
+                    .output
+                    .last()
+                    .is_some_and(|b| *b == b' ' || *b == b'\t')
+            {
+                0
+            } else {
+                state.output.push(*c);
+                1
+            }
         }
         Doc::DoubleChar(cs) => {
             state.output.extend_from_slice(cs);
@@ -338,8 +349,19 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         }
 
         Doc::String(s) => {
-            state.output.extend_from_slice(s.as_bytes());
-            s.len()
+            // Coalesce: skip single-space string if output already ends with whitespace.
+            // Single-space strings are emitted by @pretty separators (nobreak, IfBreak flat branch).
+            if s.as_bytes() == b" "
+                && state
+                    .output
+                    .last()
+                    .is_some_and(|b| *b == b' ' || *b == b'\t')
+            {
+                0
+            } else {
+                state.output.extend_from_slice(s.as_bytes());
+                s.len()
+            }
         }
 
         Doc::i8(v) => format_int(*v, state),

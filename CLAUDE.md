@@ -41,15 +41,18 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - Derive macro uses `#[pprint(rename = "...")]` and `#[pprint(skip)]` / `#[pprint(ignore)]` attributes
 - `Printer` is `Copy`—all fields are `usize`/`bool`
 - `Score` in text_justify is `Copy`—eliminates clones in O(n^2) DP loop
-- `count_text_length()` is memoized via `HashMap<*const Doc, usize>` in `PrintState`
+- `count_text_length()` is memoized via `FxHashMap<*const Doc, usize>` in `PrintState` (rustc-hash for faster hashing)
 - `SmartJoin` reuses `doc_lengths: Vec<usize>` across calls (cleared, not reallocated)
 - `text_justify` memo buffer pooled in `PrintState`—reused across SmartJoin calls, no per-call allocation
+- `text_justify` falls back to O(n) greedy packing when n > 32 to avoid O(n^2) DP overhead
+- `pprint_ref(&Doc, Option<Printer>) -> String` — renders by reference without consuming or cloning
 - `space_cache` pre-allocated to 128 bytes; output buffer sized from initial text length estimate
 - `Join`/`SmartJoin` use tuple-boxed form `Box<(Doc, Vec<Doc>)>` to reduce Doc enum size
 - Group flat-mode check accounts for `current_line_len` (Wadler-Lindig correct)
 - `IfBreak` propagates `break_mode` through `PrintItem` stack (no fragile peek heuristic)
 - `text_justify` uses `saturating_pow(3)` + line clamping to prevent overflow
 - `Bytes`/`SmallBytes` validated via `from_utf8().expect()` (no `unsafe`)
+- `handle_literal` coalesces consecutive spaces: skips `Doc::Char(b' ')` and single-space `Doc::String` when output already ends with whitespace; prevents opaque-span trailing whitespace from doubling with separators
 
 ## Testing
 cargo test              # 16 tests: 4 derive + 12 digit_count
