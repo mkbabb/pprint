@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::doc::Doc;
 use crate::utils::{text_justify, Score};
@@ -40,7 +40,7 @@ struct PrintState<'a> {
     join_breaks: Vec<usize>,
     doc_lengths: Vec<usize>,
     memo_buffer: Vec<Score>,
-    text_length_cache: HashMap<*const Doc<'a>, usize>,
+    text_length_cache: FxHashMap<*const Doc<'a>, usize>,
 }
 
 #[inline(always)]
@@ -91,7 +91,7 @@ fn count_join_length<'a>(
     sep: &'a Doc<'a>,
     docs: &'a [Doc<'a>],
     printer: &Printer,
-    cache: &mut HashMap<*const Doc<'a>, usize>,
+    cache: &mut FxHashMap<*const Doc<'a>, usize>,
 ) -> usize {
     if docs.is_empty() {
         return 0;
@@ -110,7 +110,7 @@ fn count_join_length<'a>(
 fn count_text_length<'a>(
     doc: &'a Doc<'a>,
     printer: &Printer,
-    cache: &mut HashMap<*const Doc<'a>, usize>,
+    cache: &mut FxHashMap<*const Doc<'a>, usize>,
 ) -> usize {
     let key = doc as *const _;
     if let Some(&len) = cache.get(&key) {
@@ -483,7 +483,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
 
     let mut printer = printer.unwrap_or_default();
 
-    let mut text_length_cache = HashMap::new();
+    let mut text_length_cache = FxHashMap::default();
     let estimated_output = count_text_length(&doc, &printer, &mut text_length_cache);
 
     let mut state = PrintState {
@@ -555,6 +555,117 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                 // Standard Wadler-Lindig: Group only sets break_mode for children.
                 // IfBreak docs inside the Group handle actual line breaking.
                 // No automatic leading break or trailing Hardline.
+                state.stack.push(PrintItem {
+                    doc: d,
+                    indent_delta,
+                    left: None,
+                    break_left: 0,
+                    break_mode: needs_breaking,
+                });
+            }
+            Doc::IfBreak(doc, other) => {
+                let doc = if break_mode { doc } else { other };
+                state.stack.push(PrintItem {
+                    doc,
+                    indent_delta,
+                    left: None,
+                    break_left: 0,
+                    break_mode,
+                });
+            }
+            Doc::Join(inner) | Doc::SmartJoin(inner) => {
+                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer);
+            }
+
+            Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
+                handle_n_docs_unrolled(doc, &mut state, &mut printer);
+            }
+            _ => {
+                handle_literal(doc, &mut state, &mut printer);
+            }
+        }
+    }
+
+    String::from_utf8(state.output)
+        .expect("pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8")
+}
+
+/// Pretty-print a document by reference, avoiding cloning.
+///
+/// Same as `pprint()` but borrows the Doc tree instead of consuming it.
+/// Useful for benchmarks and when the same Doc tree needs to be rendered
+/// multiple times (e.g., LSP formatting).
+pub fn pprint_ref<'a>(doc: &'a Doc<'a>, printer: Option<Printer>) -> String {
+    let mut printer = printer.unwrap_or_default();
+
+    let mut text_length_cache = FxHashMap::default();
+    let estimated_output = count_text_length(doc, &printer, &mut text_length_cache);
+
+    let mut state = PrintState {
+        stack: Vec::with_capacity(64),
+        output: Vec::with_capacity(estimated_output.max(1024)),
+
+        current_line_len: 0,
+        indent_delta: 0,
+
+        space_cache: Vec::with_capacity(128),
+        join_breaks: Vec::new(),
+        doc_lengths: Vec::new(),
+        memo_buffer: Vec::new(),
+        text_length_cache,
+    };
+
+    state.stack.push(PrintItem {
+        doc,
+        indent_delta: 0,
+        left: None,
+        break_left: 0,
+        break_mode: false,
+    });
+
+    while let Some(PrintItem {
+        doc,
+        indent_delta,
+        left,
+        break_left,
+        break_mode,
+    }) = state.stack.pop()
+    {
+        if let Some(left) = left {
+            handle_literal(left, &mut state, &mut printer);
+        }
+        if break_left > 0 {
+            while state.output.last() == Some(&b' ') || state.output.last() == Some(&b'\t') {
+                state.output.pop();
+            }
+            state.current_line_len = append_line(&mut state, &mut printer);
+        }
+
+        let (doc, indent_delta) = match doc {
+            Doc::Indent(d) => (d.as_ref(), indent_delta.saturating_add(printer.indent)),
+            Doc::Dedent(d) => (d.as_ref(), indent_delta.saturating_sub(printer.indent)),
+            _ => (doc, indent_delta),
+        };
+
+        state.indent_delta = indent_delta;
+
+        match doc {
+            Doc::Concat(docs) => {
+                for d in docs.iter().rev() {
+                    state.stack.push(PrintItem {
+                        doc: d,
+                        indent_delta,
+                        left: None,
+                        break_left: 0,
+                        break_mode,
+                    });
+                }
+            }
+            Doc::Group(d) => {
+                let group_width =
+                    count_text_length(d, &printer, &mut state.text_length_cache);
+                let needs_breaking =
+                    state.current_line_len.saturating_add(group_width) > printer.max_width;
                 state.stack.push(PrintItem {
                     doc: d,
                     indent_delta,

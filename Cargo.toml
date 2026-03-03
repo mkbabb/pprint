@@ -19,6 +19,7 @@ dragonbox = "0.1.8"
 itoap = "1.0.1"
 pprint_derive = { path = "./derive", version = "0.2.1" }
 regex = "1.11"
+rustc-hash = "2"
 
 [dev-dependencies]
 rand = "0.8"

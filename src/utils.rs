@@ -25,6 +25,36 @@ pub struct Score {
     pub j: usize,
 }
 
+/// Greedy line breaking: pack as many items as fit on each line.
+/// O(n) — used as fallback when n is large to avoid O(n^2) DP.
+#[inline]
+fn text_justify_greedy(
+    sep_length: usize,
+    doc_lengths: &[usize],
+    max_width: usize,
+    output: &mut Vec<usize>,
+) {
+    let n = doc_lengths.len();
+    let mut i = 0;
+    while i < n {
+        let mut line_length = doc_lengths[i];
+        let mut j = i + 1;
+        while j < n {
+            let next = line_length + sep_length + doc_lengths[j];
+            if next > max_width {
+                break;
+            }
+            line_length = next;
+            j += 1;
+        }
+        output.push(j);
+        i = j;
+    }
+}
+
+/// Threshold above which we switch from O(n^2) DP to O(n) greedy.
+const GREEDY_THRESHOLD: usize = 32;
+
 #[inline]
 pub fn text_justify(
     sep_length: usize,
@@ -33,8 +63,14 @@ pub fn text_justify(
     output: &mut Vec<usize>,
     memo: &mut Vec<Score>,
 ) {
-    // Initialize memoization vector with maximum badness and the index of the next word
     let n = doc_lengths.len();
+
+    // For large item counts, use greedy O(n) instead of O(n^2) DP.
+    if n > GREEDY_THRESHOLD {
+        return text_justify_greedy(sep_length, doc_lengths, max_width, output);
+    }
+
+    // Initialize memoization vector with maximum badness and the index of the next word
     memo.clear();
     memo.resize(
         n + 1,
@@ -84,20 +120,10 @@ pub fn text_justify(
     }
 
     // Generate the list of line breaks by scanning the memoization vector
-    // (0..n)
-    //     .scan(0, |i, _| {
-    //         let j = memo[*i].j;
-    //         *i = j;
-    //         Some(j)
-    //     })
-    //     .collect_into(&mut output)
-
     let mut i = 0;
     while i < n {
         let j = memo[i].j;
         output.push(j);
         i = j;
     }
-
-   
 }
