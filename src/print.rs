@@ -81,6 +81,7 @@ fn is_literal_doc(doc: &Doc) -> bool {
         Doc::Dedent(_) => false,
         Doc::Join(_) => false,
         Doc::SmartJoin(_) => false,
+        Doc::LinearJoin(_) => false,
         Doc::IfBreak(_, _) => false,
     }
 }
@@ -159,6 +160,7 @@ fn literal_text_length(doc: &Doc, printer: &Printer) -> Option<usize> {
         | Doc::Dedent(_)
         | Doc::Join(_)
         | Doc::SmartJoin(_)
+        | Doc::LinearJoin(_)
         | Doc::IfBreak(_, _) => None,
     }
 }
@@ -200,6 +202,8 @@ fn count_text_length<'a>(
         Doc::Join(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
 
         Doc::SmartJoin(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
+
+        Doc::LinearJoin(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
 
         // Use the "fits" branch for width calculation — we're measuring
         // whether the enclosing Group fits inline (break_mode=false).
@@ -404,6 +408,7 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         | Doc::Dedent(_)
         | Doc::Join(_)
         | Doc::SmartJoin(_)
+        | Doc::LinearJoin(_)
         | Doc::IfBreak(_, _) => {
             panic!("handle_literal called with non-literal Doc variant")
         }
@@ -458,6 +463,7 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         | Doc::Dedent(_)
         | Doc::Join(_)
         | Doc::SmartJoin(_)
+        | Doc::LinearJoin(_)
         | Doc::IfBreak(_, _) => {
             panic!("handle_literal reached non-literal composite variant")
         }
@@ -481,12 +487,88 @@ fn handle_join<'a>(
 
     let sep_is_lit = is_literal_doc(sep);
 
+    // Step 2: reverse-iterating cursor instead of binary_search per item.
+    // join_breaks is sorted ascending, items processed in reverse (high→low),
+    // so we walk the cursor backwards.
+    let mut break_cursor = state.join_breaks.len();
+
     for (i, d) in docs.iter().rev().enumerate() {
         let i = docs.len() - i - 1;
 
         let left = if i > 0 && sep_is_lit { Some(sep) } else { None };
 
-        let break_left = if is_smart_join && state.join_breaks.binary_search(&i).is_ok() {
+        let break_left = if is_smart_join && break_cursor > 0 && state.join_breaks[break_cursor - 1] == i {
+            break_cursor -= 1;
+            state.indent_delta
+        } else {
+            0
+        };
+
+        state.stack.push(PrintItem {
+            doc: d,
+            indent_delta: state.indent_delta,
+            left,
+            break_left,
+            break_mode: false,
+        });
+
+        if !sep_is_lit && i > 0 {
+            state.stack.push(PrintItem {
+                doc: sep,
+                indent_delta: state.indent_delta,
+                left: None,
+                break_left,
+                break_mode: false,
+            });
+        }
+    }
+}
+
+fn handle_linear_join<'a>(
+    sep: &'a Doc<'a>,
+    docs: &'a [Doc<'a>],
+    state: &mut PrintState<'a>,
+    printer: &mut Printer,
+) {
+    if docs.is_empty() {
+        return;
+    }
+
+    let max_width = printer.max_width.saturating_sub(state.indent_delta);
+    let sep_len = count_text_length(sep, printer, &mut state.text_length_cache);
+    let sep_is_lit = is_literal_doc(sep);
+
+    // Forward scan: compute break positions inline, then push in reverse.
+    // We reuse state.join_breaks to store break indices.
+    state.join_breaks.clear();
+
+    let mut line_len = state.current_line_len;
+
+    for (i, d) in docs.iter().enumerate() {
+        let item_width = count_text_length(d, printer, &mut state.text_length_cache);
+        if i > 0 {
+            let next_len = line_len + sep_len + item_width;
+            if next_len > max_width {
+                state.join_breaks.push(i);
+                line_len = state.indent_delta + item_width;
+            } else {
+                line_len = next_len;
+            }
+        } else {
+            line_len += item_width;
+        }
+    }
+
+    // Now push items onto the stack in reverse, using the computed break positions.
+    let mut break_cursor = state.join_breaks.len();
+
+    for (i, d) in docs.iter().rev().enumerate() {
+        let i = docs.len() - i - 1;
+
+        let left = if i > 0 && sep_is_lit { Some(sep) } else { None };
+
+        let break_left = if break_cursor > 0 && state.join_breaks[break_cursor - 1] == i {
+            break_cursor -= 1;
             state.indent_delta
         } else {
             0
@@ -570,12 +652,9 @@ fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, prin
 pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
     let doc = doc.into();
 
-    let mut text_length_cache = FxHashMap::default();
-    let estimated_output = count_text_length(&doc, &printer, &mut text_length_cache);
-
     let mut state = PrintState {
         stack: Vec::with_capacity(64),
-        output: Vec::with_capacity(estimated_output.max(1024)),
+        output: Vec::with_capacity(1024),
 
         current_line_len: 0,
         indent_delta: 0,
@@ -583,7 +662,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
-        text_length_cache,
+        text_length_cache: FxHashMap::default(),
     };
 
     state.stack.push(PrintItem {
@@ -661,6 +740,9 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
             Doc::Join(inner) | Doc::SmartJoin(inner) => {
                 handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer);
             }
+            Doc::LinearJoin(inner) => {
+                handle_linear_join(&inner.0, &inner.1, &mut state, &mut printer);
+            }
 
             Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
                 handle_n_docs_unrolled(doc, &mut state, &mut printer);
@@ -699,9 +781,14 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
         }
     }
 
-    String::from_utf8(state.output).expect(
-        "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
-    )
+    // SAFETY: We only push valid UTF-8 bytes (string literals, newlines, spaces, digits).
+    if cfg!(debug_assertions) {
+        String::from_utf8(state.output).expect(
+            "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
+        )
+    } else {
+        unsafe { String::from_utf8_unchecked(state.output) }
+    }
 }
 
 /// Pretty-print a document by reference, avoiding cloning.
@@ -710,12 +797,9 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
 /// Useful for benchmarks and when the same Doc tree needs to be rendered
 /// multiple times (e.g., LSP formatting).
 pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
-    let mut text_length_cache = FxHashMap::default();
-    let estimated_output = count_text_length(doc, &printer, &mut text_length_cache);
-
     let mut state = PrintState {
         stack: Vec::with_capacity(64),
-        output: Vec::with_capacity(estimated_output.max(1024)),
+        output: Vec::with_capacity(1024),
 
         current_line_len: 0,
         indent_delta: 0,
@@ -723,7 +807,7 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
-        text_length_cache,
+        text_length_cache: FxHashMap::default(),
     };
 
     state.stack.push(PrintItem {
@@ -797,6 +881,9 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
             Doc::Join(inner) | Doc::SmartJoin(inner) => {
                 handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer);
             }
+            Doc::LinearJoin(inner) => {
+                handle_linear_join(&inner.0, &inner.1, &mut state, &mut printer);
+            }
 
             Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
                 handle_n_docs_unrolled(doc, &mut state, &mut printer);
@@ -835,9 +922,14 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
         }
     }
 
-    String::from_utf8(state.output).expect(
-        "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
-    )
+    // SAFETY: We only push valid UTF-8 bytes (string literals, newlines, spaces, digits).
+    if cfg!(debug_assertions) {
+        String::from_utf8(state.output).expect(
+            "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
+        )
+    } else {
+        unsafe { String::from_utf8_unchecked(state.output) }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

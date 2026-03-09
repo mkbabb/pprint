@@ -51,6 +51,7 @@ pub enum Doc<'a> {
 
     Join(Box<(Doc<'a>, Vec<Doc<'a>>)>),
     SmartJoin(Box<(Doc<'a>, Vec<Doc<'a>>)>),
+    LinearJoin(Box<(Doc<'a>, Vec<Doc<'a>>)>),
 
     IfBreak(Box<Doc<'a>>, Box<Doc<'a>>),
 
@@ -187,6 +188,15 @@ pub fn smart_join<'a>(
     Doc::SmartJoin(Box::new((sep.into(), docs.iter().map(Doc::from).collect())))
 }
 
+/// Join a vector of documents with a linear scan: break when the line would overflow.
+/// No text justification pre-pass — each break decision is made inline.
+pub fn linear_join<'a>(
+    sep: impl Into<Doc<'a>> + Clone,
+    docs: Vec<impl Into<Doc<'a>> + Clone>,
+) -> Doc<'a> {
+    Doc::LinearJoin(Box::new((sep.into(), docs.iter().map(Doc::from).collect())))
+}
+
 /// Indent a document by one level.
 pub fn indent<'a>(doc: impl Into<Doc<'a>>) -> Doc<'a> {
     Doc::Indent(Box::new(doc.into()))
@@ -259,6 +269,16 @@ pub trait SmartJoin<'a> {
 impl<'a> SmartJoin<'a> for Vec<Doc<'a>> {
     fn smart_join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
         smart_join(sep, self)
+    }
+}
+
+pub trait LinearJoin<'a> {
+    fn linear_join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a>;
+}
+
+impl<'a> LinearJoin<'a> for Vec<Doc<'a>> {
+    fn linear_join(self, sep: impl Into<Doc<'a>> + Clone) -> Doc<'a> {
+        linear_join(sep, self)
     }
 }
 
