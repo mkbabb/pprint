@@ -476,6 +476,7 @@ fn handle_join<'a>(
     docs: &'a [Doc<'a>],
     state: &mut PrintState<'a>,
     printer: &mut Printer,
+    parent_break_mode: bool,
 ) {
     let is_smart_join = matches!(doc, Doc::SmartJoin(_));
 
@@ -509,7 +510,7 @@ fn handle_join<'a>(
             indent_delta: state.indent_delta,
             left,
             break_left,
-            break_mode: false,
+            break_mode: parent_break_mode,
         });
 
         if !sep_is_lit && i > 0 {
@@ -518,7 +519,7 @@ fn handle_join<'a>(
                 indent_delta: state.indent_delta,
                 left: None,
                 break_left,
-                break_mode: false,
+                break_mode: parent_break_mode,
             });
         }
     }
@@ -662,7 +663,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
-        text_length_cache: FxHashMap::default(),
+        text_length_cache: FxHashMap::with_capacity_and_hasher(256, Default::default()),
     };
 
     state.stack.push(PrintItem {
@@ -738,7 +739,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
                 });
             }
             Doc::Join(inner) | Doc::SmartJoin(inner) => {
-                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer);
+                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer, break_mode);
             }
             Doc::LinearJoin(inner) => {
                 handle_linear_join(&inner.0, &inner.1, &mut state, &mut printer);
@@ -807,7 +808,7 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
-        text_length_cache: FxHashMap::default(),
+        text_length_cache: FxHashMap::with_capacity_and_hasher(256, Default::default()),
     };
 
     state.stack.push(PrintItem {
@@ -879,7 +880,7 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
                 });
             }
             Doc::Join(inner) | Doc::SmartJoin(inner) => {
-                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer);
+                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer, break_mode);
             }
             Doc::LinearJoin(inner) => {
                 handle_linear_join(&inner.0, &inner.1, &mut state, &mut printer);
