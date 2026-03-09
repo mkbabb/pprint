@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use pprint::{join, pprint, Doc, Pretty, Wrap};
+    use pprint::{Doc, PRINTER, Pretty, Wrap, join, pprint};
 
     use std::collections::HashMap;
     use std::fmt::Debug;
@@ -31,8 +31,8 @@ mod tests {
         b: HashMap<String, HeyEnum<'a>>,
         c: InnerStrumct<'a>,
 
-        #[pprint(ignore)]
-        no: usize,
+        #[pprint(skip)]
+        _no: usize,
     }
 
     #[derive(Pretty, Debug)]
@@ -59,7 +59,7 @@ mod tests {
         )
         .wrap(Doc::from("["), Doc::from("]"));
 
-        let pretty = pprint(s, None);
+        let pretty = pprint(s, PRINTER);
         println!("{}", pretty);
     }
 
@@ -67,7 +67,7 @@ mod tests {
     fn test_enum() {
         let s = HeyEnum::There("there");
 
-        let pretty = pprint(s, None);
+        let pretty = pprint(s, PRINTER);
         println!("{}", pretty);
     }
 
@@ -79,7 +79,7 @@ mod tests {
             z: (u128::MAX, 2, 3, 4),
         };
 
-        let pretty = pprint(s, None);
+        let pretty = pprint(s, PRINTER);
         println!("{}", pretty);
     }
 
@@ -89,7 +89,7 @@ mod tests {
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8,
             9, 10,
         ];
-        let a: Vec<_> = a.into_iter().map(|x| x).collect();
+        let a: Vec<_> = a.into_iter().collect();
 
         let mut b = HashMap::new();
         b.insert("hello".to_string(), HeyEnum::There("there"));
@@ -108,10 +108,10 @@ mod tests {
                 z: (1, 2, 3, 4),
             },
 
-            no: 0,
+            _no: 0,
         };
 
-        let pretty = pprint(s, None);
+        let pretty = pprint(s, PRINTER);
         println!("{}", pretty);
         // println!("{:#?}", s);
     }

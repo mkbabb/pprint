@@ -8,13 +8,13 @@ configurable.
 ## Usage
 
 ```rust
-use pprint::{Doc, pprint};
+use pprint::{Doc, PRINTER, pprint};
 
 let doc = Doc::from(vec![1, 2, 3])
     .join(Doc::from(", ") + Doc::Hardline)
     .wrap("[", "]");
 
-print!("{}", pprint(doc));
+print!("{}", pprint(doc, PRINTER));
 // prints:
 // [
 //   1,
@@ -42,7 +42,7 @@ The `Printer` handles pretty printing a `Doc` to a string with configurable opti
 
 Two entry points:
 
--   `pprint(doc)` — consumes the `Doc` and renders to `String`
+-   `pprint(doc, printer)` — consumes the `Doc` and renders to `String`
 -   `pprint_ref(&doc, printer)` — borrows the `Doc` without consuming or cloning it; useful for benchmarks and repeated renders (e.g., LSP formatting)
 
 ## Derive Macro

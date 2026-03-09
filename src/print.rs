@@ -1,8 +1,8 @@
 use rustc_hash::FxHashMap;
 
-use crate::doc::Doc;
-use crate::utils::{text_justify, Score};
 use crate::DigitCount;
+use crate::doc::Doc;
+use crate::utils::text_justify;
 
 struct PrintItem<'a> {
     doc: &'a Doc<'a>,
@@ -39,50 +39,49 @@ struct PrintState<'a> {
     space_cache: Vec<u8>,
     join_breaks: Vec<usize>,
     doc_lengths: Vec<usize>,
-    memo_buffer: Vec<Score>,
     text_length_cache: FxHashMap<*const Doc<'a>, usize>,
 }
 
 #[inline(always)]
 fn is_literal_doc(doc: &Doc) -> bool {
-    fn is_literal(doc: &Doc) -> bool {
-        matches!(
-            doc,
-            Doc::Char(_)
-                | Doc::DoubleChar(_)
-                | Doc::TripleChar(_)
-                | Doc::QuadChar(_)
-                | Doc::SmallBytes(_, _)
-                | Doc::Bytes(_, _)
-                | Doc::String(_)
-                | Doc::i8(_)
-                | Doc::i16(_)
-                | Doc::i32(_)
-                | Doc::i64(_)
-                | Doc::i128(_)
-                | Doc::isize(_)
-                | Doc::u8(_)
-                | Doc::u16(_)
-                | Doc::u32(_)
-                | Doc::u64(_)
-                | Doc::u128(_)
-                | Doc::usize(_)
-                | Doc::f32(_)
-                | Doc::f64(_)
-                | Doc::Line
-                | Doc::Softline
-                | Doc::Mediumline
-                | Doc::Hardline
-        )
-    }
-
     match doc {
+        Doc::Null => false,
+        Doc::Char(_)
+        | Doc::DoubleChar(_)
+        | Doc::TripleChar(_)
+        | Doc::QuadChar(_)
+        | Doc::SmallBytes(_, _)
+        | Doc::Bytes(_, _)
+        | Doc::String(_)
+        | Doc::i8(_)
+        | Doc::i16(_)
+        | Doc::i32(_)
+        | Doc::i64(_)
+        | Doc::i128(_)
+        | Doc::isize(_)
+        | Doc::u8(_)
+        | Doc::u16(_)
+        | Doc::u32(_)
+        | Doc::u64(_)
+        | Doc::u128(_)
+        | Doc::usize(_)
+        | Doc::f32(_)
+        | Doc::f64(_)
+        | Doc::Line
+        | Doc::Softline
+        | Doc::Mediumline
+        | Doc::Hardline => true,
         Doc::DoubleDoc(doc1, doc2) => is_literal_doc(doc1) && is_literal_doc(doc2),
         Doc::TripleDoc(doc1, doc2, doc3) => {
             is_literal_doc(doc1) && is_literal_doc(doc2) && is_literal_doc(doc3)
         }
-        // Doc::Concat(docs) => docs.iter().all(is_literal),
-        _ => is_literal(doc),
+        Doc::Concat(_) => false,
+        Doc::Group(_) => false,
+        Doc::Indent(_) => false,
+        Doc::Dedent(_) => false,
+        Doc::Join(_) => false,
+        Doc::SmartJoin(_) => false,
+        Doc::IfBreak(_, _) => false,
     }
 }
 
@@ -106,12 +105,74 @@ fn count_join_length<'a>(
     doc_len + sep_len * (docs.len() - 1)
 }
 
+#[inline(always)]
+fn literal_text_length(doc: &Doc, printer: &Printer) -> Option<usize> {
+    match doc {
+        Doc::Null => Some(0),
+        Doc::Char(_) => Some(1),
+        Doc::DoubleChar(_) => Some(2),
+        Doc::TripleChar(_) => Some(3),
+        Doc::QuadChar(_) => Some(4),
+        Doc::SmallBytes(_, len) => Some(*len),
+        Doc::Bytes(_, len) => Some(*len),
+        Doc::String(s) => Some(s.len()),
+        Doc::i8(value) => Some(value.len()),
+        Doc::i16(value) => Some(value.len()),
+        Doc::i32(value) => Some(value.len()),
+        Doc::i64(value) => Some(value.len()),
+        Doc::i128(value) => Some(value.len()),
+        Doc::isize(value) => Some(value.len()),
+        Doc::u8(value) => Some(value.len()),
+        Doc::u16(value) => Some(value.len()),
+        Doc::u32(value) => Some(value.len()),
+        Doc::u64(value) => Some(value.len()),
+        Doc::u128(value) => Some(value.len()),
+        Doc::usize(value) => Some(value.len()),
+        Doc::f32(value) => {
+            assert!(
+                value.is_finite(),
+                "pprint: non-finite float is unsupported (value: {value})"
+            );
+            Some(10)
+        }
+        Doc::f64(value) => {
+            assert!(
+                value.is_finite(),
+                "pprint: non-finite float is unsupported (value: {value})"
+            );
+            Some(20)
+        }
+        Doc::Softline => Some(1),
+        Doc::Mediumline => Some(0),
+        Doc::Hardline | Doc::Line => Some(printer.max_width),
+        Doc::DoubleDoc(doc1, doc2) => {
+            Some(literal_text_length(doc1, printer)? + literal_text_length(doc2, printer)?)
+        }
+        Doc::TripleDoc(doc1, doc2, doc3) => Some(
+            literal_text_length(doc1, printer)?
+                + literal_text_length(doc2, printer)?
+                + literal_text_length(doc3, printer)?,
+        ),
+        Doc::Concat(_)
+        | Doc::Group(_)
+        | Doc::Indent(_)
+        | Doc::Dedent(_)
+        | Doc::Join(_)
+        | Doc::SmartJoin(_)
+        | Doc::IfBreak(_, _) => None,
+    }
+}
+
 #[inline]
 fn count_text_length<'a>(
     doc: &'a Doc<'a>,
     printer: &Printer,
     cache: &mut FxHashMap<*const Doc<'a>, usize>,
 ) -> usize {
+    if let Some(len) = literal_text_length(doc, printer) {
+        return len;
+    }
+
     let key = doc as *const _;
     if let Some(&len) = cache.get(&key) {
         return len;
@@ -121,6 +182,15 @@ fn count_text_length<'a>(
             .iter()
             .map(|d| count_text_length(d, printer, cache))
             .sum(),
+
+        Doc::DoubleDoc(doc1, doc2) => {
+            count_text_length(doc1, printer, cache) + count_text_length(doc2, printer, cache)
+        }
+        Doc::TripleDoc(doc1, doc2, doc3) => {
+            count_text_length(doc1, printer, cache)
+                + count_text_length(doc2, printer, cache)
+                + count_text_length(doc3, printer, cache)
+        }
 
         Doc::Group(d) => count_text_length(d, printer, cache),
 
@@ -135,38 +205,32 @@ fn count_text_length<'a>(
         // whether the enclosing Group fits inline (break_mode=false).
         Doc::IfBreak(_t, f) => count_text_length(f, printer, cache),
 
-        Doc::Softline => 1,
-
-        Doc::Hardline | Doc::Line => printer.max_width,
-
-        Doc::Char(_) => 1,
-        Doc::DoubleChar(_) => 2,
-        Doc::TripleChar(_) => 3,
-        Doc::QuadChar(_) => 4,
-
-        Doc::SmallBytes(_, len) => *len,
-        Doc::Bytes(_, len) => *len,
-
-        Doc::String(s) => s.len(),
-
-        Doc::i8(value) => value.len(),
-        Doc::i16(value) => value.len(),
-        Doc::i32(value) => value.len(),
-        Doc::i64(value) => value.len(),
-        Doc::i128(value) => value.len(),
-        Doc::isize(value) => value.len(),
-
-        Doc::u8(value) => value.len(),
-        Doc::u16(value) => value.len(),
-        Doc::u32(value) => value.len(),
-        Doc::u64(value) => value.len(),
-        Doc::u128(value) => value.len(),
-        Doc::usize(value) => value.len(),
-
-        Doc::f32(_) => 10,
-        Doc::f64(_) => 20,
-
-        _ => 0,
+        Doc::Null
+        | Doc::Char(_)
+        | Doc::DoubleChar(_)
+        | Doc::TripleChar(_)
+        | Doc::QuadChar(_)
+        | Doc::SmallBytes(_, _)
+        | Doc::Bytes(_, _)
+        | Doc::String(_)
+        | Doc::i8(_)
+        | Doc::i16(_)
+        | Doc::i32(_)
+        | Doc::i64(_)
+        | Doc::i128(_)
+        | Doc::isize(_)
+        | Doc::u8(_)
+        | Doc::u16(_)
+        | Doc::u32(_)
+        | Doc::u64(_)
+        | Doc::u128(_)
+        | Doc::usize(_)
+        | Doc::f32(_)
+        | Doc::f64(_)
+        | Doc::Softline
+        | Doc::Mediumline
+        | Doc::Hardline
+        | Doc::Line => unreachable!("literal docs are handled in literal_text_length"),
     };
     cache.insert(key, len);
     len
@@ -184,15 +248,21 @@ fn smart_join_breaks<'a>(
 
     let sep_length = count_text_length(sep, printer, &mut state.text_length_cache);
     state.doc_lengths.clear();
-    state
-        .doc_lengths
-        .extend(docs.iter().map(|d| count_text_length(d, printer, &mut state.text_length_cache)));
+    state.doc_lengths.extend(
+        docs.iter()
+            .map(|d| count_text_length(d, printer, &mut state.text_length_cache)),
+    );
 
     // sep_length stays as-is — text_justify already accounts for separators.
 
     state.join_breaks.clear();
 
-    text_justify(sep_length, &state.doc_lengths, max_width, &mut state.join_breaks, &mut state.memo_buffer)
+    text_justify(
+        sep_length,
+        &state.doc_lengths,
+        max_width,
+        &mut state.join_breaks,
+    )
 }
 
 #[inline(always)]
@@ -200,65 +270,26 @@ fn format_int<T>(value: T, state: &mut PrintState) -> usize
 where
     T: itoap::Integer + std::fmt::Display,
 {
-    // unsafe {
-    //     // First, extend the output by i128::MAX_DIGITS (40) bytes:
-    //     output.extend_from_slice(&[0; itoa::raw::I128_MAX_LEN]);
-    //     // Then, format the integer into the last 40 bytes of the output:
-    //     let len = itoa::raw::format(
-    //         value,
-    //         output
-    //             .as_mut_ptr()
-    //             .add(output.len() - itoa::raw::I128_MAX_LEN),
-    //     );
-    //     // Then, truncate the output to the correct length:
-    //     output.truncate(output.len() - itoa::raw::I128_MAX_LEN + len);
-
-    //     len
-    // }
     let prev_len = state.output.len();
     itoap::write_to_vec(&mut state.output, value);
     state.output.len() - prev_len
-
-    // let mut buf = itoa::Buffer::new();
-    // let s = buf.format(value).as_bytes();
-    // output.extend_from_slice(s);
-    // s.len()
-
-    // let prev_len = output.len();
-    // write!(output, "{}", value).unwrap();
-    // output.len() - prev_len
 }
 
-// Function for f64
 #[inline(always)]
-fn format_f64<T>(value: T, state: &mut PrintState) -> usize
-where
-    T: std::fmt::Display + dragonbox::Float,
-{
-    // unsafe {
-    //     const MAX_LEN: usize = 16;
-    //     // First, extend the output by 16 bytes:
-    //     output.extend_from_slice(&[0; MAX_LEN]);
-    //     // Then, format the f32 into the last MAX_LEN bytes of the output:
-    //     let len = ryu::raw::format32(value, output.as_mut_ptr().add(output.len() - MAX_LEN));
-    //     // Then, truncate the output to the correct length:
-    //     output.truncate(output.len() - MAX_LEN + len);
-
-    //     len
-    // }
-
+fn format_f64(value: f64, state: &mut PrintState) -> usize {
+    assert!(
+        value.is_finite(),
+        "pprint: non-finite float is unsupported (value: {value})"
+    );
     let mut buf = dragonbox::Buffer::new();
     let s = buf.format_finite(value).as_bytes();
     state.output.extend_from_slice(s);
     s.len()
+}
 
-    // let mut buf = ryu::Buffer::new();
-    // let s = buf.format_finite(value).as_bytes();
-    // output.extend_from_slice(s);
-    // s.len()
-
-    // write!(output, "{}", value as f32).unwrap();
-    // output.len()
+#[inline(always)]
+fn format_f32(value: f32, state: &mut PrintState) -> usize {
+    format_f64(value as f64, state)
 }
 
 #[inline(always)]
@@ -300,30 +331,23 @@ fn handle_line<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut P
         Doc::Mediumline if state.current_line_len > printer.max_width / 2 => {
             append_line(state, printer)
         }
+        Doc::Mediumline => state.current_line_len,
 
         Doc::Softline if state.current_line_len > printer.max_width => append_line(state, printer),
+        Doc::Softline => state.current_line_len,
 
-        _ => state.current_line_len,
+        _ => panic!("handle_line called with non-line Doc variant"),
     }
 }
 
 #[inline(always)]
 fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) {
     let offset = match doc {
+        Doc::Null => 0,
+
         Doc::Char(c) => {
-            // Coalesce: skip space if output already ends with whitespace.
-            // Prevents opaque-span trailing whitespace from doubling with separators.
-            if *c == b' '
-                && state
-                    .output
-                    .last()
-                    .is_some_and(|b| *b == b' ' || *b == b'\t')
-            {
-                0
-            } else {
-                state.output.push(*c);
-                1
-            }
+            state.output.push(*c);
+            1
         }
         Doc::DoubleChar(cs) => {
             state.output.extend_from_slice(cs);
@@ -349,19 +373,8 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         }
 
         Doc::String(s) => {
-            // Coalesce: skip single-space string if output already ends with whitespace.
-            // Single-space strings are emitted by @pretty separators (nobreak, IfBreak flat branch).
-            if s.as_bytes() == b" "
-                && state
-                    .output
-                    .last()
-                    .is_some_and(|b| *b == b' ' || *b == b'\t')
-            {
-                0
-            } else {
-                state.output.extend_from_slice(s.as_bytes());
-                s.len()
-            }
+            state.output.extend_from_slice(s.as_bytes());
+            s.len()
         }
 
         Doc::i8(v) => format_int(*v, state),
@@ -378,13 +391,30 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         Doc::u128(v) => format_int(*v, state),
         Doc::usize(v) => format_int(*v, state),
 
-        Doc::f32(v) => format_f64(*v as f64, state),
+        Doc::f32(v) => format_f32(*v, state),
         Doc::f64(v) => format_f64(*v, state),
 
-        _ => 0,
+        Doc::Line | Doc::Softline | Doc::Mediumline | Doc::Hardline => 0,
+
+        Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => 0,
+
+        Doc::Concat(_)
+        | Doc::Group(_)
+        | Doc::Indent(_)
+        | Doc::Dedent(_)
+        | Doc::Join(_)
+        | Doc::SmartJoin(_)
+        | Doc::IfBreak(_, _) => {
+            panic!("handle_literal called with non-literal Doc variant")
+        }
     };
 
-    state.current_line_len = offset + handle_line(doc, state, printer);
+    state.current_line_len = match doc {
+        Doc::Line | Doc::Hardline | Doc::Mediumline | Doc::Softline => {
+            handle_line(doc, state, printer)
+        }
+        _ => state.current_line_len + offset,
+    };
 
     match doc {
         Doc::DoubleDoc(doc1, doc2) => {
@@ -396,7 +426,41 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
             handle_literal(doc2, state, printer);
             handle_literal(doc3, state, printer);
         }
-        _ => {}
+        Doc::Null
+        | Doc::Char(_)
+        | Doc::DoubleChar(_)
+        | Doc::TripleChar(_)
+        | Doc::QuadChar(_)
+        | Doc::SmallBytes(_, _)
+        | Doc::Bytes(_, _)
+        | Doc::String(_)
+        | Doc::i8(_)
+        | Doc::i16(_)
+        | Doc::i32(_)
+        | Doc::i64(_)
+        | Doc::i128(_)
+        | Doc::isize(_)
+        | Doc::u8(_)
+        | Doc::u16(_)
+        | Doc::u32(_)
+        | Doc::u64(_)
+        | Doc::u128(_)
+        | Doc::usize(_)
+        | Doc::f32(_)
+        | Doc::f64(_)
+        | Doc::Line
+        | Doc::Softline
+        | Doc::Mediumline
+        | Doc::Hardline => {}
+        Doc::Concat(_)
+        | Doc::Group(_)
+        | Doc::Indent(_)
+        | Doc::Dedent(_)
+        | Doc::Join(_)
+        | Doc::SmartJoin(_)
+        | Doc::IfBreak(_, _) => {
+            panic!("handle_literal reached non-literal composite variant")
+        }
     }
 }
 
@@ -407,8 +471,12 @@ fn handle_join<'a>(
     state: &mut PrintState<'a>,
     printer: &mut Printer,
 ) {
-    if let Doc::SmartJoin(_) = doc {
+    let is_smart_join = matches!(doc, Doc::SmartJoin(_));
+
+    if is_smart_join {
         smart_join_breaks(sep, docs, state, printer);
+    } else {
+        state.join_breaks.clear();
     }
 
     let sep_is_lit = is_literal_doc(sep);
@@ -418,7 +486,7 @@ fn handle_join<'a>(
 
         let left = if i > 0 && sep_is_lit { Some(sep) } else { None };
 
-        let break_left = if state.join_breaks.binary_search(&i).is_ok() {
+        let break_left = if is_smart_join && state.join_breaks.binary_search(&i).is_ok() {
             state.indent_delta
         } else {
             0
@@ -443,7 +511,6 @@ fn handle_join<'a>(
         }
     }
 }
-
 
 fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mut Printer) {
     match doc {
@@ -497,13 +564,11 @@ fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, prin
 
 /// Core pretty printing function.
 ///
-/// Takes a document and an optional printer configuration and returns a String.
+/// Takes a document and a printer configuration and returns a String.
 /// Uses a stack to avoid recursion, keeping track of the current line length,
 /// and indent level.
-pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
+pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
     let doc = doc.into();
-
-    let mut printer = printer.unwrap_or_default();
 
     let mut text_length_cache = FxHashMap::default();
     let estimated_output = count_text_length(&doc, &printer, &mut text_length_cache);
@@ -518,7 +583,6 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
-        memo_buffer: Vec::new(),
         text_length_cache,
     };
 
@@ -570,8 +634,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
                 }
             }
             Doc::Group(d) => {
-                let group_width =
-                    count_text_length(d, &printer, &mut state.text_length_cache);
+                let group_width = count_text_length(d, &printer, &mut state.text_length_cache);
                 let needs_breaking =
                     state.current_line_len.saturating_add(group_width) > printer.max_width;
                 // Standard Wadler-Lindig: Group only sets break_mode for children.
@@ -602,14 +665,43 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
             Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
                 handle_n_docs_unrolled(doc, &mut state, &mut printer);
             }
-            _ => {
+            Doc::Indent(_) | Doc::Dedent(_) => {
+                unreachable!("Indent/Dedent should be normalized before dispatch");
+            }
+            Doc::Null
+            | Doc::Char(_)
+            | Doc::DoubleChar(_)
+            | Doc::TripleChar(_)
+            | Doc::QuadChar(_)
+            | Doc::SmallBytes(_, _)
+            | Doc::Bytes(_, _)
+            | Doc::String(_)
+            | Doc::i8(_)
+            | Doc::i16(_)
+            | Doc::i32(_)
+            | Doc::i64(_)
+            | Doc::i128(_)
+            | Doc::isize(_)
+            | Doc::u8(_)
+            | Doc::u16(_)
+            | Doc::u32(_)
+            | Doc::u64(_)
+            | Doc::u128(_)
+            | Doc::usize(_)
+            | Doc::f32(_)
+            | Doc::f64(_)
+            | Doc::Line
+            | Doc::Softline
+            | Doc::Mediumline
+            | Doc::Hardline => {
                 handle_literal(doc, &mut state, &mut printer);
             }
         }
     }
 
-    String::from_utf8(state.output)
-        .expect("pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8")
+    String::from_utf8(state.output).expect(
+        "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
+    )
 }
 
 /// Pretty-print a document by reference, avoiding cloning.
@@ -617,9 +709,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Option<Printer>) -> String {
 /// Same as `pprint()` but borrows the Doc tree instead of consuming it.
 /// Useful for benchmarks and when the same Doc tree needs to be rendered
 /// multiple times (e.g., LSP formatting).
-pub fn pprint_ref<'a>(doc: &'a Doc<'a>, printer: Option<Printer>) -> String {
-    let mut printer = printer.unwrap_or_default();
-
+pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
     let mut text_length_cache = FxHashMap::default();
     let estimated_output = count_text_length(doc, &printer, &mut text_length_cache);
 
@@ -633,7 +723,6 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, printer: Option<Printer>) -> String {
         space_cache: Vec::with_capacity(128),
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
-        memo_buffer: Vec::new(),
         text_length_cache,
     };
 
@@ -684,8 +773,7 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, printer: Option<Printer>) -> String {
                 }
             }
             Doc::Group(d) => {
-                let group_width =
-                    count_text_length(d, &printer, &mut state.text_length_cache);
+                let group_width = count_text_length(d, &printer, &mut state.text_length_cache);
                 let needs_breaking =
                     state.current_line_len.saturating_add(group_width) > printer.max_width;
                 state.stack.push(PrintItem {
@@ -713,14 +801,43 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, printer: Option<Printer>) -> String {
             Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
                 handle_n_docs_unrolled(doc, &mut state, &mut printer);
             }
-            _ => {
+            Doc::Indent(_) | Doc::Dedent(_) => {
+                unreachable!("Indent/Dedent should be normalized before dispatch");
+            }
+            Doc::Null
+            | Doc::Char(_)
+            | Doc::DoubleChar(_)
+            | Doc::TripleChar(_)
+            | Doc::QuadChar(_)
+            | Doc::SmallBytes(_, _)
+            | Doc::Bytes(_, _)
+            | Doc::String(_)
+            | Doc::i8(_)
+            | Doc::i16(_)
+            | Doc::i32(_)
+            | Doc::i64(_)
+            | Doc::i128(_)
+            | Doc::isize(_)
+            | Doc::u8(_)
+            | Doc::u16(_)
+            | Doc::u32(_)
+            | Doc::u64(_)
+            | Doc::u128(_)
+            | Doc::usize(_)
+            | Doc::f32(_)
+            | Doc::f64(_)
+            | Doc::Line
+            | Doc::Softline
+            | Doc::Mediumline
+            | Doc::Hardline => {
                 handle_literal(doc, &mut state, &mut printer);
             }
         }
     }
 
-    String::from_utf8(state.output)
-        .expect("pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8")
+    String::from_utf8(state.output).expect(
+        "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -746,33 +863,11 @@ impl Default for Printer {
 /// A builder for a printer configuration.
 /// Allows for setting the max width, indent, and whether to use tabs.
 impl Printer {
-    pub const fn new(
-        max_width: usize,
-        indent: usize,
-        use_tabs: bool,
-    ) -> Self {
+    pub const fn new(max_width: usize, indent: usize, use_tabs: bool) -> Self {
         Printer {
             max_width,
             indent,
             use_tabs,
         }
     }
-
-    // pub fn pprint<'a>(&self, doc: impl Into<Doc<'a>>) -> String {
-    //     pprint(doc.into(), self.clone().into())
-    // }
 }
-
-// impl std::fmt::Debug for Doc<'_> {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let s = PRINTER.pprint(self);
-//         f.write_str(&s)
-//     }
-// }
-
-// impl std::fmt::Display for Doc<'_> {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let s = PRINTER.pprint(self);
-//         f.write_str(&s)
-//     }
-// }

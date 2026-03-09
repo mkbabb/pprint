@@ -4,7 +4,6 @@ use std::io::Write;
 
 use regex::Regex;
 
-
 const BYTES_SIZE: usize = 24;
 
 /// A Document that can be pretty printed
@@ -87,10 +86,11 @@ where
     T: std::fmt::Display,
 {
     let mut bytes = [0u8; BYTES_SIZE];
+    let mut cursor = std::io::Cursor::new(&mut bytes[..]);
 
-    write!(&mut bytes[..], "{}", value).unwrap();
-
-    let len = bytes.iter().position(|&x| x == 0).unwrap_or(BYTES_SIZE);
+    write!(&mut cursor, "{}", value)
+        .expect("format_small_bytes: value exceeded fixed stack buffer capacity");
+    let len = cursor.position() as usize;
 
     if len == 1 {
         Doc::Char(bytes[0])
@@ -105,8 +105,12 @@ where
     }
 }
 
-pub fn bytes<'a>(value: &[u8], len: Option<usize>) -> Doc<'a> {
-    let len = len.unwrap_or(value.len());
+pub fn bytes<'a>(value: &[u8], len: usize) -> Doc<'a> {
+    assert!(
+        len <= value.len(),
+        "bytes: requested length ({len}) exceeds input slice length ({})",
+        value.len()
+    );
 
     if len == 1 {
         Doc::Char(value[0])
@@ -118,11 +122,11 @@ pub fn bytes<'a>(value: &[u8], len: Option<usize>) -> Doc<'a> {
         Doc::QuadChar([value[0], value[1], value[2], value[3]])
     } else if len <= BYTES_SIZE {
         let mut bytes = [0u8; BYTES_SIZE];
-        bytes[..len].copy_from_slice(value);
+        bytes[..len].copy_from_slice(&value[..len]);
 
         Doc::SmallBytes(bytes, len)
     } else {
-        Doc::Bytes(value.into(), len)
+        Doc::Bytes(value[..len].into(), len)
     }
 }
 
@@ -270,13 +274,13 @@ impl<'a> Wrap<'a> for Doc<'a> {
 
 impl<'a> From<&'a str> for Doc<'a> {
     fn from(s: &'a str) -> Doc<'a> {
-        bytes(s.as_bytes(), s.len().into())
+        bytes(s.as_bytes(), s.len())
     }
 }
 
 impl<'a> From<String> for Doc<'a> {
     fn from(s: String) -> Doc<'a> {
-        bytes(s.as_bytes(), s.len().into())
+        bytes(s.as_bytes(), s.len())
     }
 }
 
@@ -297,8 +301,9 @@ macro_rules! impl_from_number_to_doc {
         )*
     };
 }
-impl_from_number_to_doc!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64);
-
+impl_from_number_to_doc!(
+    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64
+);
 
 impl<'a, T> From<Option<T>> for Doc<'a>
 where
@@ -307,7 +312,7 @@ where
     fn from(opt: Option<T>) -> Doc<'a> {
         match opt {
             Some(value) => value.into(),
-            None => Doc::from("None"),
+            None => panic!("Doc::from<Option<T>>: None is unsupported; handle None explicitly"),
         }
     }
 }
@@ -401,21 +406,10 @@ where
 {
     fn from(vec: Vec<T>) -> Doc<'a> {
         if !vec.is_empty() {
-            // join with hardline separator
-            // join(Doc::from(", "), vec)
-            //     .group()
-            //     .wrap("[", "]")
-            //     .indent()
-            // concat(vec)
-            smart_join(
-                // Doc::DoubleDoc(Doc::from(", ").into(), Doc::Softline.into()),
-                Doc::from(", "),
-                vec,
-            ).group().wrap("[", "]").indent()
-            // join(Doc::from(", "), vec)
-            // .indent()
-            // Doc::Null
-            // Doc::Concat(vec.iter().map(|x| Doc::from(x)).collect())
+            smart_join(Doc::from(", "), vec)
+                .group()
+                .wrap("[", "]")
+                .indent()
         } else {
             Doc::from("[]")
         }

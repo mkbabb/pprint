@@ -1,7 +1,7 @@
 #![feature(test)]
 
 use pprint::count::DigitCount;
-use rand::{distributions::uniform::SampleUniform, Rng};
+use rand::{Rng, distributions::uniform::SampleUniform};
 use std::fmt::Display;
 
 extern crate test;

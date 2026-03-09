@@ -3,7 +3,7 @@
 extern crate pprint;
 extern crate test;
 
-use pprint::{pprint, Printer};
+use pprint::{PRINTER, Printer, pprint};
 use test::Bencher;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -27,7 +27,9 @@ fn create_string_vec(n: usize) -> Vec<String> {
 }
 
 fn create_mixed_tuples(n: usize) -> Vec<(usize, f64)> {
-    (0..n).map(|i| (i, i as f64 * 3.14159)).collect()
+    (0..n)
+        .map(|i| (i, i as f64 * std::f64::consts::PI))
+        .collect()
 }
 
 // ── pprint benchmarks ────────────────────────────────────────────────────────
@@ -35,37 +37,37 @@ fn create_mixed_tuples(n: usize) -> Vec<(usize, f64)> {
 #[bench]
 fn bench_pprint_flat_vec_1k(b: &mut Bencher) {
     let data = create_flat_vec(1_000);
-    b.iter(|| test::black_box(pprint(&data, None)));
+    b.iter(|| test::black_box(pprint(&data, PRINTER)));
 }
 
 #[bench]
 fn bench_pprint_flat_vec_10k(b: &mut Bencher) {
     let data = create_flat_vec(10_000);
-    b.iter(|| test::black_box(pprint(&data, None)));
+    b.iter(|| test::black_box(pprint(&data, PRINTER)));
 }
 
 #[bench]
 fn bench_pprint_nested_100x100(b: &mut Bencher) {
     let data = create_nested_vec(100, 100);
-    b.iter(|| test::black_box(pprint(&data, None)));
+    b.iter(|| test::black_box(pprint(&data, PRINTER)));
 }
 
 #[bench]
 fn bench_pprint_floats_1k(b: &mut Bencher) {
     let data = create_float_vec(1_000);
-    b.iter(|| test::black_box(pprint(&data, None)));
+    b.iter(|| test::black_box(pprint(&data, PRINTER)));
 }
 
 #[bench]
 fn bench_pprint_strings_1k(b: &mut Bencher) {
     let data = create_string_vec(1_000);
-    b.iter(|| test::black_box(pprint(&data, None)));
+    b.iter(|| test::black_box(pprint(&data, PRINTER)));
 }
 
 #[bench]
 fn bench_pprint_tuples_1k(b: &mut Bencher) {
     let data = create_mixed_tuples(1_000);
-    b.iter(|| test::black_box(pprint(&data, None)));
+    b.iter(|| test::black_box(pprint(&data, PRINTER)));
 }
 
 #[bench]
@@ -75,7 +77,7 @@ fn bench_pprint_narrow_40col(b: &mut Bencher) {
         max_width: 40,
         ..Default::default()
     };
-    b.iter(|| test::black_box(pprint(&data, Some(printer.clone()))));
+    b.iter(|| test::black_box(pprint(&data, printer)));
 }
 
 #[bench]
@@ -85,7 +87,7 @@ fn bench_pprint_wide_120col(b: &mut Bencher) {
         max_width: 120,
         ..Default::default()
     };
-    b.iter(|| test::black_box(pprint(&data, Some(printer.clone()))));
+    b.iter(|| test::black_box(pprint(&data, printer)));
 }
 
 // ── Debug benchmarks — same data, format!("{:#?}") ───────────────────────────

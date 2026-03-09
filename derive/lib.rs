@@ -3,8 +3,8 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, token::Comma, Attribute, Data, DeriveInput, Field, Fields,
-    LitStr, Variant, WherePredicate,
+    Attribute, Data, DeriveInput, Field, Fields, LitStr, Variant, WherePredicate,
+    parse_macro_input, parse_quote, token::Comma,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -29,9 +29,8 @@ fn parse_pretty_attrs(attrs: &[Attribute]) -> PrettyAttributes {
             continue;
         }
 
-        // Parse the attribute; we don't care if this fails as we'll silently default
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip") || meta.path.is_ident("ignore") {
+        if let Err(error) = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("skip") {
                 pretty_attrs.skip = true;
                 Ok(())
             } else if meta.path.is_ident("indent") {
@@ -54,7 +53,9 @@ fn parse_pretty_attrs(attrs: &[Attribute]) -> PrettyAttributes {
                     "Unknown pprint attribute",
                 ))
             }
-        });
+        }) {
+            panic!("Invalid #[pprint(...)] attribute: {error}");
+        }
     }
 
     pretty_attrs
@@ -79,7 +80,7 @@ fn apply_pretty_doc_attributes(
 /// The generated From implementation will convert the struct or enum into a pprint::Doc<'a>, where the Doc lifetime
 /// is either the lifetime of the struct or enum, or 'a if no lifetime is specified.
 /// Example:
-/// ```
+/// ```ignore
 /// use pprint::Doc;
 /// use pprint_derive::Pretty;
 /// #[derive(Pretty)]
@@ -149,37 +150,26 @@ pub fn pprint_derive(input: TokenStream) -> TokenStream {
 }
 
 fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
-    let format_key_value = |field_ident: &Option<syn::Ident>, field: &Field| {
-        let pretty_attrs = parse_pretty_attrs(&field.attrs);
-        if pretty_attrs.skip {
-            return None;
-        }
-        let field_name = pretty_attrs.rename.clone().unwrap_or_else(|| {
-            field_ident
-                .as_ref()
-                .map(|ident| ident.to_string())
-                .unwrap_or_else(|| "".to_string())
-        });
+    let format_key_value =
+        |field_name: String, field_access: proc_macro2::TokenStream, field: &Field| {
+            let pretty_attrs = parse_pretty_attrs(&field.attrs);
+            if pretty_attrs.skip {
+                return None;
+            }
+            let field_name = pretty_attrs.rename.clone().unwrap_or(field_name);
 
-        let is_generic_type = matches!(field.ty, syn::Type::Path(_));
-
-        // If the type is a generic type, we need to call into() on it to convert it to a Doc
-        let field_doc = if is_generic_type {
-            quote! { _self.#field_ident.into() }
-        } else {
-            quote! { Doc::from(_self.#field_ident) }
+            let field_doc = quote! { (#field_access).into() };
+            let field_doc = apply_pretty_doc_attributes(&field_doc, &pretty_attrs);
+            let field_doc = quote! {
+                Doc::Concat(vec![
+                    Doc::from(#field_name),
+                    Doc::from(": "),
+                    #field_doc,
+                ])
+            };
+            // Doc of the form: "key: value"
+            Some(field_doc)
         };
-        let field_doc = apply_pretty_doc_attributes(&field_doc, &pretty_attrs);
-        let field_doc = quote! {
-            Doc::Concat(vec![
-                Doc::from(#field_name),
-                Doc::from(": "),
-                #field_doc,
-            ])
-        };
-        // Doc of the form: "key: value"
-        Some(field_doc)
-    };
 
     // Generate the match arms for each field
     match fields {
@@ -187,8 +177,13 @@ fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream
             .named
             .iter()
             .filter_map(|field| {
-                let field_ident = &field.ident;
-                format_key_value(field_ident, field)
+                let field_ident = field
+                    .ident
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("derive(Pretty): named field missing identifier"));
+                let field_name = field_ident.to_string();
+                let field_access = quote! { _self.#field_ident };
+                format_key_value(field_name, field_access, field)
             })
             .collect(),
 
@@ -198,8 +193,10 @@ fn generate_struct_fields_match(fields: &Fields) -> Vec<proc_macro2::TokenStream
             .iter()
             .enumerate()
             .filter_map(|(i, field)| {
-                let field_ident = Some(format_ident!("field_{}", i));
-                format_key_value(&field_ident, field)
+                let field_name = format!("field_{}", i);
+                let field_index = syn::Index::from(i);
+                let field_access = quote! { _self.#field_index };
+                format_key_value(field_name, field_access, field)
             })
             .collect(),
         Fields::Unit => vec![],
@@ -217,9 +214,6 @@ fn generate_struct_match(
         .unwrap_or_else(|| ident.to_string());
 
     let fields_match = generate_struct_fields_match(fields);
-
-    // TODO: Fix: hack to remove the unused variable warning when the field is ignored.
-    let named_fields = fields.into_iter().filter_map(|field| field.ident.clone());
 
     match fields {
         Fields::Named(_) | Fields::Unnamed(_) => {
@@ -241,17 +235,7 @@ fn generate_struct_match(
                 body
             };
 
-            // let doc_match = quote! { Doc::Concat(vec![#(#fields_match,)*]) };
-
-            // let doc_match =  quote! { Doc::Null };
-        
-
-            quote! {
-                // The hack to remove the unused variable warning when the field is ignored.
-                (#((&_self.#named_fields),)*);
-                // The actual implementation
-                #doc_match
-            }
+            quote! { #doc_match }
         }
         Fields::Unit => {
             quote! {
@@ -269,7 +253,28 @@ fn generate_variants_match(
     let pretty_attrs = parse_pretty_attrs(&variant.attrs);
 
     if pretty_attrs.skip {
-        return None;
+        let panic_msg = format!(
+            "derive(Pretty): variant `{}` is marked #[pprint(skip)] and cannot be formatted",
+            variant.ident
+        );
+        let skipped_arm = match &variant.fields {
+            Fields::Named(_) => {
+                quote! {
+                    #constructor { .. } => panic!(#panic_msg)
+                }
+            }
+            Fields::Unnamed(_) => {
+                quote! {
+                    #constructor(..) => panic!(#panic_msg)
+                }
+            }
+            Fields::Unit => {
+                quote! {
+                    #constructor => panic!(#panic_msg)
+                }
+            }
+        };
+        return Some(skipped_arm);
     }
 
     let variant_name = pretty_attrs
@@ -311,7 +316,9 @@ fn generate_variants_match(
     // If the variant has a getter, we need to call it to get the value of the field
     let field_doc = match pretty_attrs.getter.clone() {
         Some(getter) => {
-            let getter = syn::parse_str::<syn::Expr>(&getter).unwrap();
+            let getter = syn::parse_str::<syn::Expr>(&getter).unwrap_or_else(|error| {
+                panic!("derive(Pretty): invalid getter expression `{getter}`: {error}")
+            });
             quote! {
                 #getter(&#field_bindings_tup)
             }
@@ -373,8 +380,6 @@ fn generate_enum_match(
     quote! {
         match _self {
            #(#variants_match,)*
-           // Ensure no variant is missing
-           _ => Doc::Null
         }
     }
 }

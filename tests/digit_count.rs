@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod range_tests {
     use pprint::count::DigitCount;
-    use rand::{distributions::uniform::SampleUniform, Rng};
+    use rand::{Rng, distributions::uniform::SampleUniform};
     use std::fmt::Display;
 
     // Generic test function for a range of values with stochastic sampling
