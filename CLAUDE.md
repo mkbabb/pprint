@@ -9,9 +9,9 @@ cargo clippy --workspace -- -D warnings
 
 ## Structure
 src/lib.rs         # crate root, re-exports
-src/doc.rs         # Doc IR — Nil, Text, Hardline, Concat, Nest, Group, Join, SmartJoin, etc.
+src/doc.rs         # Doc IR — Nil, Text, Hardline, Concat, Nest, Group, Join, SmartJoin, LinearJoin, etc.
 src/print.rs       # Wadler-Lindig printer — fits check, layout engine, dtoa
-src/utils.rs       # text_justify DP algorithm for SmartJoin line breaking
+src/utils.rs       # text_justify greedy algorithm for SmartJoin line breaking
 src/dtoa/          # fast f64→string (Schubfach algorithm)
 derive/            # pprint_derive proc macro (#[derive(Pretty)])
 
@@ -40,14 +40,18 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - `Doc` is the core IR; all formatting builds a `Doc` tree, then `pprint()` renders it
 - Derive macro uses `#[pprint(rename = "...")]` and `#[pprint(skip)]` / `#[pprint(ignore)]` attributes
 - `Printer` is `Copy`—all fields are `usize`/`bool`
-- `Score` in text_justify is `Copy`—eliminates clones in O(n^2) DP loop
 - `count_text_length()` is memoized via `FxHashMap<*const Doc, usize>` in `PrintState` (rustc-hash for faster hashing)
 - `SmartJoin` reuses `doc_lengths: Vec<usize>` across calls (cleared, not reallocated)
+- `SmartJoin` uses reverse-iterating cursor for break checks — O(1) per item, not binary_search O(log n)
+- `LinearJoin` — inline break decisions during render, no text_justify pre-pass. Best for code formatting.
+- `SmartJoin` — greedy bin-packing via text_justify. Best for prose/text justification.
+- `Join` — delegates all break decisions to enclosing Group/IfBreak. No autonomous breaks.
 - `text_justify` memo buffer pooled in `PrintState`—reused across SmartJoin calls, no per-call allocation
-- `text_justify` falls back to O(n) greedy packing when n > 32 to avoid O(n^2) DP overhead
 - `pprint_ref(&Doc, Option<Printer>) -> String` — renders by reference without consuming or cloning
-- `space_cache` pre-allocated to 128 bytes; output buffer sized from initial text length estimate
-- `Join`/`SmartJoin` use tuple-boxed form `Box<(Doc, Vec<Doc>)>` to reduce Doc enum size
+- No full-tree pre-pass — output buffer starts at fixed 1024 capacity, `count_text_length` only called lazily by Group/Join
+- `space_cache` pre-allocated to 128 bytes
+- `Join`/`SmartJoin`/`LinearJoin` use tuple-boxed form `Box<(Doc, Vec<Doc>)>` to reduce Doc enum size
+- Release builds use `String::from_utf8_unchecked` — all Doc sources produce valid UTF-8
 - Group flat-mode check accounts for `current_line_len` (Wadler-Lindig correct)
 - `IfBreak` propagates `break_mode` through `PrintItem` stack (no fragile peek heuristic)
 - `text_justify` uses `saturating_pow(3)` + line clamping to prevent overflow
