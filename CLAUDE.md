@@ -1,19 +1,38 @@
 # pprint
 
-Flexible and lightweight pretty printing library for Rust.
+Flexible and lightweight pretty printing library — Rust + TypeScript monorepo.
+
+## Structure
+
+```
+rust/                      Rust workspace
+  Cargo.toml
+  src/                     lib.rs, doc.rs, print.rs, utils.rs, dtoa/
+  derive/                  pprint_derive proc macro
+  benches/
+  tests/
+typescript/                TS library (placeholder, will be filled in later)
+  package.json
+  src/
+  test/
+```
 
 ## Build
+
+```bash
+cd rust
 cargo build
 cargo test
 cargo clippy --workspace -- -D warnings
+```
 
-## Structure
-src/lib.rs         # crate root, re-exports
-src/doc.rs         # Doc IR — Nil, Text, Hardline, Concat, Nest, Group, Join, SmartJoin, LinearJoin, etc.
-src/print.rs       # Wadler-Lindig printer — fits check, layout engine, dtoa
-src/utils.rs       # text_justify greedy algorithm for SmartJoin line breaking
-src/dtoa/          # fast f64→string (Schubfach algorithm)
-derive/            # pprint_derive proc macro (#[derive(Pretty)])
+## Rust Structure
+rust/src/lib.rs         # crate root, re-exports
+rust/src/doc.rs         # Doc IR — Nil, Text, Hardline, Concat, Nest, Group, Join, SmartJoin, LinearJoin, etc.
+rust/src/print.rs       # Wadler-Lindig printer — fits check, layout engine, dtoa
+rust/src/utils.rs       # text_justify greedy algorithm for SmartJoin line breaking
+rust/src/dtoa/          # fast f64→string (Schubfach algorithm)
+rust/derive/            # pprint_derive proc macro (#[derive(Pretty)])
 
 ## Dependency Graph
 
@@ -59,10 +78,14 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - `handle_literal` coalesces consecutive spaces: skips `Doc::Char(b' ')` and single-space `Doc::String` when output already ends with whitespace; prevents opaque-span trailing whitespace from doubling with separators
 
 ## Testing
-cargo test              # 16 tests: 4 derive + 12 digit_count
+```bash
+cd rust && cargo test    # 16 tests: 4 derive + 12 digit_count
+```
 
 ## Benchmarks
-cargo bench             # 26 benchmarks: 14 pprint + 12 digit_count
+```bash
+cd rust && cargo bench   # 26 benchmarks: 14 pprint + 12 digit_count
+```
 - pprint benches: flat_vec (1k/10k), nested_100x100, floats_1k, strings_1k, tuples_1k, narrow_40col, wide_120col
 - Each pprint bench has a `Debug` counterpart for direct comparison
 - digit_count benches: all integer types (i8–i128, u8–u128, isize, usize)

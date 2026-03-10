@@ -106,7 +106,7 @@ For more information on the algorithm in particular, see the above's heavily com
 
 ## Performance
 
-Throughput varies by workload—leaf-heavy documents (integers, strings) are close to `Debug`, while `smart_join` adds DP overhead for optimal line breaking.
+Throughput varies by workload -- leaf-heavy documents (integers, strings) are close to `Debug`, while `smart_join` adds DP overhead for optimal line breaking.
 
 | Benchmark | pprint (ns) | Debug (ns) | Ratio |
 |-----------|-------------|------------|-------|
@@ -116,6 +116,29 @@ Throughput varies by workload—leaf-heavy documents (integers, strings) are clo
 | floats_1k | 43,227 | 67,748 | 0.64x |
 | strings_1k | 109,014 | 48,582 | 2.2x |
 | tuples_1k | 270,835 | 153,970 | 1.8x |
+
+### Render Optimizations
+
+Several optimizations target the render pipeline, particularly for code formatting
+workloads (CSS, JSON) where throughput exceeds 1,400 MB/s on the Doc-to-string phase:
+
+- **No full-tree pre-pass.** Output buffer starts at fixed 1024 capacity.
+  `count_text_length` is called lazily by `Group` and `Join` only when needed.
+- **`LinearJoin` variant.** Inline break decisions during render with no
+  `text_justify` pre-pass. Best for code formatting where optimal prose
+  justification is unnecessary. Emitted by bbnf codegen for non-text-justify modes.
+- **Reverse cursor in `SmartJoin`.** Break checks use a reverse-iterating cursor
+  (O(1) per item) instead of `binary_search` (O(log n)).
+- **FxHashMap pre-allocated.** `text_length_cache` uses `rustc-hash` FxHashMap
+  with 256 initial capacity, avoiding rehash overhead.
+- **`text_justify` memo pooling.** The `doc_lengths` buffer is reused across
+  `SmartJoin` calls (cleared, not reallocated).
+- **Release `from_utf8_unchecked`.** All Doc sources produce valid UTF-8, so
+  release builds skip validation.
+
+In the [gorgeous](https://github.com/mkbabb/gorgeous) CSS formatter, the pprint
+render phase achieves ~1,428 MB/s on bootstrap.css (281KB), making it negligible
+compared to parsing and Doc construction.
 
 See the [benches](benches) directory for more information.
 
