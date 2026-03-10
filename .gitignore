@@ -3,3 +3,12 @@ node_modules/
 coverage/
 data/
 target/
+dist/
+.cargo/
+.claude/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Screenshot artifacts (root only, not assets/)
+/*.png
