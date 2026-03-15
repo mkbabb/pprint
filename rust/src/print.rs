@@ -265,6 +265,7 @@ fn smart_join_breaks<'a>(
         sep_length,
         &state.doc_lengths,
         max_width,
+        state.current_line_len,
         &mut state.join_breaks,
     )
 }
@@ -498,11 +499,16 @@ fn handle_join<'a>(
 
         let left = if i > 0 && sep_is_lit { Some(sep) } else { None };
 
-        let break_left = if is_smart_join && break_cursor > 0 && state.join_breaks[break_cursor - 1] == i {
+        let (break_left, item_break_mode) = if is_smart_join && break_cursor > 0 && state.join_breaks[break_cursor - 1] == i {
             break_cursor -= 1;
-            state.indent_delta
+            // SmartJoin decided to break before this item — override parent's break_mode
+            // so IfBreak separators use the break branch only at SmartJoin-chosen positions.
+            // Use max(indent_delta, 1) to ensure break_left > 0 triggers the newline.
+            (state.indent_delta.max(1), true)
         } else {
-            0
+            // No break at this position — use flat mode for IfBreak separators,
+            // even if the parent Group is broken.
+            (0, if is_smart_join { false } else { parent_break_mode })
         };
 
         state.stack.push(PrintItem {
@@ -510,7 +516,7 @@ fn handle_join<'a>(
             indent_delta: state.indent_delta,
             left,
             break_left,
-            break_mode: parent_break_mode,
+            break_mode: item_break_mode,
         });
 
         if !sep_is_lit && i > 0 {
@@ -518,8 +524,10 @@ fn handle_join<'a>(
                 doc: sep,
                 indent_delta: state.indent_delta,
                 left: None,
-                break_left,
-                break_mode: parent_break_mode,
+                // Separator gets break_mode from SmartJoin's decision but NO break_left —
+                // the line break is emitted by the following item's break_left, not here.
+                break_left: 0,
+                break_mode: item_break_mode,
             });
         }
     }
