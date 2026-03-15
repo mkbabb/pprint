@@ -8,11 +8,10 @@ configurable.
 ## Usage
 
 ```rust
-use pprint::{Doc, PRINTER, pprint};
+use pprint::{Doc, PRINTER, pprint, join, wrap};
 
-let doc = Doc::from(vec![1, 2, 3])
-    .join(Doc::from(", ") + Doc::Hardline)
-    .wrap("[", "]");
+let items: Vec<Doc> = vec![1, 2, 3].into_iter().map(Doc::from).collect();
+let doc = wrap("[", "]", items.join(Doc::from(", ") + Doc::Hardline));
 
 print!("{}", pprint(doc, PRINTER));
 // prints:
@@ -47,8 +46,8 @@ Two entry points:
 
 ## Derive Macro
 
-Half of the library's development time was spent on the derive macro, allowing for easy
-pretty printing of essentially any type. Here's a trivial example:
+The derive macro allows for easy pretty printing of essentially any type. Here's a
+trivial example:
 
 ```rust
 #[derive(Pretty)]
@@ -93,14 +92,14 @@ print!("{}", Doc::from(point));
 // }
 ```
 
-Structures can be arbitrarily nested, & c. & c. More involved examples can be found in
+Structures can be arbitrarily nested. More involved examples can be found in
 the [tests](tests/derive_tests.rs) file.
 
 ## `smart_join`
 
 `smart_join`'s implementation is based off the text justification algorithm: [`text_justify`](src/utils)
 
-For n <= 32 items, `text_justify` uses the full O(n^2) DP algorithm. For n > 32, it falls back to an O(n) greedy packing heuristic to avoid quadratic overhead on large join lists.
+`text_justify` uses greedy bin-packing: items are packed left-to-right into lines, breaking when the next item would exceed `max_width`. O(n) for all inputs.
 
 For more information on the algorithm in particular, see the above's heavily commented source code, or the wonderful [Lecture No. 20](https://www.youtube.com/watch?v=ENyox7kNKeY) from MIT's 6.006 course, "Introduction to Algorithms".
 
@@ -144,4 +143,4 @@ See the [benches](benches) directory for more information.
 
 ## About
 
-This library was partway created as a means by which to learn more about Rust's procedural macros, and partway because I just love pretty printing. It's a work in progress, but I'm fairly pleased with it hitherto. If you have any suggestions, please feel free to open an issue or a pull request.
+Contributions and suggestions welcome — open an issue or pull request.
