@@ -66,6 +66,10 @@ impl<'a> std::ops::Add for Doc<'a> {
 
     fn add(self, other: Doc<'a>) -> Doc<'a> {
         match (self, other) {
+            // Skip Null operands — avoids polluting Concat vecs with
+            // zero-width nodes that still incur traversal + cache overhead.
+            (Doc::Null, other) => other,
+            (s, Doc::Null) => s,
             (Doc::Concat(mut docs), other) => {
                 docs.push(other);
                 Doc::Concat(docs)
