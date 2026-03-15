@@ -653,15 +653,152 @@ fn handle_n_docs_unrolled<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, prin
     }
 }
 
-/// Core pretty printing function.
+/// Shared render loop used by both `pprint` and `pprint_ref`.
 ///
-/// Takes a document and a printer configuration and returns a String.
-/// Uses a stack to avoid recursion, keeping track of the current line length,
-/// and indent level.
-pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
-    let doc = doc.into();
+/// Drains the `state.stack`, dispatching each `PrintItem` to the appropriate
+/// handler. Factored into a macro to avoid duplicating the ~100-line loop
+/// across the owning (`pprint`) and borrowing (`pprint_ref`) entry points.
+macro_rules! render_loop {
+    ($state:expr, $printer:expr) => {
+        while let Some(PrintItem {
+            doc,
+            indent_delta,
+            left,
+            break_left,
+            break_mode,
+        }) = $state.stack.pop()
+        {
+            if let Some(left) = left {
+                handle_literal(left, &mut $state, &mut $printer);
+            }
+            if break_left > 0 {
+                // Strip trailing whitespace before the line break.
+                while $state.output.last() == Some(&b' ')
+                    || $state.output.last() == Some(&b'\t')
+                {
+                    $state.output.pop();
+                }
+                $state.current_line_len = append_line(&mut $state, &mut $printer);
+            }
 
-    let mut state = PrintState {
+            let (doc, indent_delta) = match doc {
+                Doc::Indent(d) => (d.as_ref(), indent_delta.saturating_add($printer.indent)),
+                Doc::Dedent(d) => (d.as_ref(), indent_delta.saturating_sub($printer.indent)),
+                _ => (doc, indent_delta),
+            };
+
+            $state.indent_delta = indent_delta;
+
+            match doc {
+                Doc::Concat(docs) => {
+                    for d in docs.iter().rev() {
+                        $state.stack.push(PrintItem {
+                            doc: d,
+                            indent_delta,
+                            left: None,
+                            break_left: 0,
+                            break_mode,
+                        });
+                    }
+                }
+                Doc::Group(d) => {
+                    let group_width =
+                        count_text_length(d, &$printer, &mut $state.text_length_cache);
+                    let needs_breaking =
+                        $state.current_line_len.saturating_add(group_width) > $printer.max_width;
+                    // Standard Wadler-Lindig: Group only sets break_mode for children.
+                    // IfBreak docs inside the Group handle actual line breaking.
+                    // No automatic leading break or trailing Hardline.
+                    $state.stack.push(PrintItem {
+                        doc: d,
+                        indent_delta,
+                        left: None,
+                        break_left: 0,
+                        break_mode: needs_breaking,
+                    });
+                }
+                Doc::IfBreak(doc, other) => {
+                    let doc = if break_mode { doc } else { other };
+                    $state.stack.push(PrintItem {
+                        doc,
+                        indent_delta,
+                        left: None,
+                        break_left: 0,
+                        break_mode,
+                    });
+                }
+                Doc::Join(inner) | Doc::SmartJoin(inner) => {
+                    handle_join(
+                        doc,
+                        &inner.0,
+                        &inner.1,
+                        &mut $state,
+                        &mut $printer,
+                        break_mode,
+                    );
+                }
+                Doc::LinearJoin(inner) => {
+                    handle_linear_join(&inner.0, &inner.1, &mut $state, &mut $printer);
+                }
+
+                Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
+                    handle_n_docs_unrolled(doc, &mut $state, &mut $printer);
+                }
+                Doc::Indent(_) | Doc::Dedent(_) => {
+                    unreachable!("Indent/Dedent should be normalized before dispatch");
+                }
+                Doc::Null
+                | Doc::Char(_)
+                | Doc::DoubleChar(_)
+                | Doc::TripleChar(_)
+                | Doc::QuadChar(_)
+                | Doc::SmallBytes(_, _)
+                | Doc::Bytes(_, _)
+                | Doc::String(_)
+                | Doc::i8(_)
+                | Doc::i16(_)
+                | Doc::i32(_)
+                | Doc::i64(_)
+                | Doc::i128(_)
+                | Doc::isize(_)
+                | Doc::u8(_)
+                | Doc::u16(_)
+                | Doc::u32(_)
+                | Doc::u64(_)
+                | Doc::u128(_)
+                | Doc::usize(_)
+                | Doc::f32(_)
+                | Doc::f64(_)
+                | Doc::Line
+                | Doc::Softline
+                | Doc::Mediumline
+                | Doc::Hardline => {
+                    handle_literal(doc, &mut $state, &mut $printer);
+                }
+            }
+        }
+    };
+}
+
+/// Finalize the output buffer into a String.
+///
+/// In debug builds, validates UTF-8. In release builds, uses unchecked
+/// conversion since all Doc sources produce valid UTF-8 (string literals,
+/// newlines, spaces, digits).
+#[inline]
+fn finalize_output(output: Vec<u8>) -> String {
+    if cfg!(debug_assertions) {
+        String::from_utf8(output).expect(
+            "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
+        )
+    } else {
+        unsafe { String::from_utf8_unchecked(output) }
+    }
+}
+
+/// Create a fresh `PrintState` with default capacities.
+fn new_print_state<'a>() -> PrintState<'a> {
+    PrintState {
         stack: Vec::with_capacity(64),
         output: Vec::with_capacity(1024),
 
@@ -672,7 +809,17 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
         join_breaks: Vec::new(),
         doc_lengths: Vec::new(),
         text_length_cache: FxHashMap::with_capacity_and_hasher(256, Default::default()),
-    };
+    }
+}
+
+/// Core pretty printing function.
+///
+/// Takes a document and a printer configuration and returns a String.
+/// Uses a stack to avoid recursion, keeping track of the current line length,
+/// and indent level.
+pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
+    let doc = doc.into();
+    let mut state = new_print_state();
 
     state.stack.push(PrintItem {
         doc: &doc,
@@ -682,122 +829,8 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
         break_mode: false,
     });
 
-    while let Some(PrintItem {
-        doc,
-        indent_delta,
-        left,
-        break_left,
-        break_mode,
-    }) = state.stack.pop()
-    {
-        if let Some(left) = left {
-            handle_literal(left, &mut state, &mut printer);
-        }
-        if break_left > 0 {
-            // Strip trailing whitespace before the line break.
-            while state.output.last() == Some(&b' ') || state.output.last() == Some(&b'\t') {
-                state.output.pop();
-            }
-            state.current_line_len = append_line(&mut state, &mut printer);
-        }
-
-        let (doc, indent_delta) = match doc {
-            Doc::Indent(d) => (d.as_ref(), indent_delta.saturating_add(printer.indent)),
-            Doc::Dedent(d) => (d.as_ref(), indent_delta.saturating_sub(printer.indent)),
-            _ => (doc, indent_delta),
-        };
-
-        state.indent_delta = indent_delta;
-
-        match doc {
-            Doc::Concat(docs) => {
-                for d in docs.iter().rev() {
-                    state.stack.push(PrintItem {
-                        doc: d,
-                        indent_delta,
-                        left: None,
-                        break_left: 0,
-                        break_mode,
-                    });
-                }
-            }
-            Doc::Group(d) => {
-                let group_width = count_text_length(d, &printer, &mut state.text_length_cache);
-                let needs_breaking =
-                    state.current_line_len.saturating_add(group_width) > printer.max_width;
-                // Standard Wadler-Lindig: Group only sets break_mode for children.
-                // IfBreak docs inside the Group handle actual line breaking.
-                // No automatic leading break or trailing Hardline.
-                state.stack.push(PrintItem {
-                    doc: d,
-                    indent_delta,
-                    left: None,
-                    break_left: 0,
-                    break_mode: needs_breaking,
-                });
-            }
-            Doc::IfBreak(doc, other) => {
-                let doc = if break_mode { doc } else { other };
-                state.stack.push(PrintItem {
-                    doc,
-                    indent_delta,
-                    left: None,
-                    break_left: 0,
-                    break_mode,
-                });
-            }
-            Doc::Join(inner) | Doc::SmartJoin(inner) => {
-                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer, break_mode);
-            }
-            Doc::LinearJoin(inner) => {
-                handle_linear_join(&inner.0, &inner.1, &mut state, &mut printer);
-            }
-
-            Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
-                handle_n_docs_unrolled(doc, &mut state, &mut printer);
-            }
-            Doc::Indent(_) | Doc::Dedent(_) => {
-                unreachable!("Indent/Dedent should be normalized before dispatch");
-            }
-            Doc::Null
-            | Doc::Char(_)
-            | Doc::DoubleChar(_)
-            | Doc::TripleChar(_)
-            | Doc::QuadChar(_)
-            | Doc::SmallBytes(_, _)
-            | Doc::Bytes(_, _)
-            | Doc::String(_)
-            | Doc::i8(_)
-            | Doc::i16(_)
-            | Doc::i32(_)
-            | Doc::i64(_)
-            | Doc::i128(_)
-            | Doc::isize(_)
-            | Doc::u8(_)
-            | Doc::u16(_)
-            | Doc::u32(_)
-            | Doc::u64(_)
-            | Doc::u128(_)
-            | Doc::usize(_)
-            | Doc::f32(_)
-            | Doc::f64(_)
-            | Doc::Line
-            | Doc::Softline
-            | Doc::Mediumline
-            | Doc::Hardline => {
-                handle_literal(doc, &mut state, &mut printer);
-            }
-        }
-    }
-
-    // SAFETY: We only push valid UTF-8 bytes (string literals, newlines, spaces, digits).
-    if cfg!(debug_assertions) {
-        String::from_utf8(state.output).expect(
-            "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
-        )
-    } else {
-        unsafe { String::from_utf8_unchecked(state.output) }
-    }
+    render_loop!(state, printer);
+    finalize_output(state.output)
 }
 
 /// Pretty-print a document by reference, avoiding cloning.
@@ -806,18 +839,7 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
 /// Useful for benchmarks and when the same Doc tree needs to be rendered
 /// multiple times (e.g., LSP formatting).
 pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
-    let mut state = PrintState {
-        stack: Vec::with_capacity(64),
-        output: Vec::with_capacity(1024),
-
-        current_line_len: 0,
-        indent_delta: 0,
-
-        space_cache: Vec::with_capacity(128),
-        join_breaks: Vec::new(),
-        doc_lengths: Vec::new(),
-        text_length_cache: FxHashMap::with_capacity_and_hasher(256, Default::default()),
-    };
+    let mut state = new_print_state();
 
     state.stack.push(PrintItem {
         doc,
@@ -827,118 +849,8 @@ pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
         break_mode: false,
     });
 
-    while let Some(PrintItem {
-        doc,
-        indent_delta,
-        left,
-        break_left,
-        break_mode,
-    }) = state.stack.pop()
-    {
-        if let Some(left) = left {
-            handle_literal(left, &mut state, &mut printer);
-        }
-        if break_left > 0 {
-            while state.output.last() == Some(&b' ') || state.output.last() == Some(&b'\t') {
-                state.output.pop();
-            }
-            state.current_line_len = append_line(&mut state, &mut printer);
-        }
-
-        let (doc, indent_delta) = match doc {
-            Doc::Indent(d) => (d.as_ref(), indent_delta.saturating_add(printer.indent)),
-            Doc::Dedent(d) => (d.as_ref(), indent_delta.saturating_sub(printer.indent)),
-            _ => (doc, indent_delta),
-        };
-
-        state.indent_delta = indent_delta;
-
-        match doc {
-            Doc::Concat(docs) => {
-                for d in docs.iter().rev() {
-                    state.stack.push(PrintItem {
-                        doc: d,
-                        indent_delta,
-                        left: None,
-                        break_left: 0,
-                        break_mode,
-                    });
-                }
-            }
-            Doc::Group(d) => {
-                let group_width = count_text_length(d, &printer, &mut state.text_length_cache);
-                let needs_breaking =
-                    state.current_line_len.saturating_add(group_width) > printer.max_width;
-                state.stack.push(PrintItem {
-                    doc: d,
-                    indent_delta,
-                    left: None,
-                    break_left: 0,
-                    break_mode: needs_breaking,
-                });
-            }
-            Doc::IfBreak(doc, other) => {
-                let doc = if break_mode { doc } else { other };
-                state.stack.push(PrintItem {
-                    doc,
-                    indent_delta,
-                    left: None,
-                    break_left: 0,
-                    break_mode,
-                });
-            }
-            Doc::Join(inner) | Doc::SmartJoin(inner) => {
-                handle_join(doc, &inner.0, &inner.1, &mut state, &mut printer, break_mode);
-            }
-            Doc::LinearJoin(inner) => {
-                handle_linear_join(&inner.0, &inner.1, &mut state, &mut printer);
-            }
-
-            Doc::DoubleDoc(_, _) | Doc::TripleDoc(_, _, _) => {
-                handle_n_docs_unrolled(doc, &mut state, &mut printer);
-            }
-            Doc::Indent(_) | Doc::Dedent(_) => {
-                unreachable!("Indent/Dedent should be normalized before dispatch");
-            }
-            Doc::Null
-            | Doc::Char(_)
-            | Doc::DoubleChar(_)
-            | Doc::TripleChar(_)
-            | Doc::QuadChar(_)
-            | Doc::SmallBytes(_, _)
-            | Doc::Bytes(_, _)
-            | Doc::String(_)
-            | Doc::i8(_)
-            | Doc::i16(_)
-            | Doc::i32(_)
-            | Doc::i64(_)
-            | Doc::i128(_)
-            | Doc::isize(_)
-            | Doc::u8(_)
-            | Doc::u16(_)
-            | Doc::u32(_)
-            | Doc::u64(_)
-            | Doc::u128(_)
-            | Doc::usize(_)
-            | Doc::f32(_)
-            | Doc::f64(_)
-            | Doc::Line
-            | Doc::Softline
-            | Doc::Mediumline
-            | Doc::Hardline => {
-                handle_literal(doc, &mut state, &mut printer);
-            }
-        }
-    }
-
-    // SAFETY: We only push valid UTF-8 bytes (string literals, newlines, spaces, digits).
-    if cfg!(debug_assertions) {
-        String::from_utf8(state.output).expect(
-            "pprint: output buffer contained invalid UTF-8 — all Doc sources must produce valid UTF-8",
-        )
-    } else {
-        unsafe { String::from_utf8_unchecked(state.output) }
-    }
+    render_loop!(state, printer);
+    finalize_output(state.output)
 }
 
 #[derive(Debug, Clone, Copy)]
