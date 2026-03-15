@@ -109,12 +109,12 @@ Throughput varies by workload -- leaf-heavy documents (integers, strings) are cl
 
 | Benchmark | pprint (ns) | Debug (ns) | Ratio |
 |-----------|-------------|------------|-------|
-| flat_vec_1k (ints) | 33,025 | 21,446 | 1.5x |
-| flat_vec_10k (ints) | 307,533 | 222,306 | 1.4x |
-| nested_100x100 | 293,817 | 327,671 | 0.90x |
-| floats_1k | 43,227 | 67,748 | 0.64x |
-| strings_1k | 109,014 | 48,582 | 2.2x |
-| tuples_1k | 270,835 | 153,970 | 1.8x |
+| flat_vec_1k (ints) | 22,929 | 21,868 | 1.05x |
+| flat_vec_10k (ints) | 224,962 | 233,289 | 0.96x |
+| nested_100x100 | 252,621 | 327,348 | 0.77x |
+| floats_1k | 28,456 | 67,833 | 0.42x |
+| strings_1k | 95,064 | 47,014 | 2.02x |
+| tuples_1k | 262,228 | 161,919 | 1.62x |
 
 ### Render Optimizations
 
@@ -136,7 +136,7 @@ workloads (CSS, JSON) where throughput exceeds 1,400 MB/s on the Doc-to-string p
   release builds skip validation.
 
 In the [gorgeous](https://github.com/mkbabb/gorgeous) CSS formatter, the pprint
-render phase achieves ~1,428 MB/s on bootstrap.css (281KB), making it negligible
+render phase achieves ~1,140 MB/s on bootstrap.css (281KB), making it negligible
 compared to parsing and Doc construction.
 
 See the [benches](benches) directory for more information.
