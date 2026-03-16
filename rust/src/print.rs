@@ -196,8 +196,9 @@ fn count_text_length<'a>(
 
         Doc::Group(d) => count_text_length(d, printer, cache),
 
-        Doc::Indent(d) => count_text_length(d, printer, cache).saturating_add(printer.indent),
-        Doc::Dedent(d) => count_text_length(d, printer, cache).saturating_sub(printer.indent),
+        // Indent/Dedent only affect post-break indentation, not flat-mode width.
+        Doc::Indent(d) => count_text_length(d, printer, cache),
+        Doc::Dedent(d) => count_text_length(d, printer, cache),
 
         Doc::Join(inner) => count_join_length(&inner.0, &inner.1, printer, cache),
 
@@ -596,7 +597,9 @@ fn handle_linear_join<'a>(
                 doc: sep,
                 indent_delta: state.indent_delta,
                 left: None,
-                break_left,
+                // Separator gets no break_left — the line break is emitted by the
+                // following item's break_left, not the separator (matching handle_join).
+                break_left: 0,
                 break_mode: false,
             });
         }
