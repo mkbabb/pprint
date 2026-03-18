@@ -116,7 +116,7 @@ let doc = join(Doc::from(", "), vec![Doc::from("a"), Doc::from("b"), Doc::from("
 
 ### SmartJoin
 
-Uses a text-justification algorithm to decide where to insert line breaks. Items are packed onto lines greedily, minimizing total overflow. Ideal for lists where items vary in width:
+Uses a DP text-justification algorithm to decide where to insert line breaks, minimizing total overflow. Ideal for lists where items vary in width:
 
 ```rust
 use pprint::smart_join;

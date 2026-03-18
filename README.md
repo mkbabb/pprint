@@ -93,15 +93,15 @@ print!("{}", Doc::from(point));
 ```
 
 Structures can be arbitrarily nested. More involved examples can be found in
-the [tests](tests/derive_tests.rs) file.
+the [tests](rust/tests/derive_tests.rs) file.
 
 ## `smart_join`
 
 `smart_join`'s implementation is based off the text justification algorithm: [`text_justify`](src/utils)
 
-`text_justify` uses greedy bin-packing: items are packed left-to-right into lines, breaking when the next item would exceed `max_width`. O(n) for all inputs.
+`text_justify` uses dynamic programming to minimize total overflow across lines. O(n) for all inputs.
 
-For more information on the algorithm in particular, see the above's heavily commented source code, or the wonderful [Lecture No. 20](https://www.youtube.com/watch?v=ENyox7kNKeY) from MIT's 6.006 course, "Introduction to Algorithms".
+For more information on the algorithm in particular, see the above's heavily commented source code, or [Lecture No. 20](https://www.youtube.com/watch?v=ENyox7kNKeY) from MIT's 6.006 course, "Introduction to Algorithms".
 
 ## Performance
 
@@ -139,7 +139,7 @@ In the [gorgeous](https://github.com/mkbabb/gorgeous) CSS formatter, the pprint
 render phase achieves ~1,140 MB/s on bootstrap.css (281KB), making it negligible
 compared to parsing and Doc construction.
 
-See the [benches](benches) directory for more information.
+See the [benches](rust/benches) directory for more information.
 
 ## About
 

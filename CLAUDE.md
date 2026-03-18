@@ -73,7 +73,6 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - Release builds use `String::from_utf8_unchecked` — all Doc sources produce valid UTF-8
 - Group flat-mode check accounts for `current_line_len` (Wadler-Lindig correct)
 - `IfBreak` propagates `break_mode` through `PrintItem` stack (no fragile peek heuristic)
-- `text_justify` uses `saturating_pow(3)` + line clamping to prevent overflow
 - `Bytes`/`SmallBytes` validated at finalize_output time (release: `from_utf8_unchecked`, debug: `from_utf8().expect()`)
 - `handle_literal` emits bytes directly to output buffer; space-coalescing removed (opaque spans handle their own whitespace)
 
