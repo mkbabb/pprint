@@ -809,11 +809,11 @@ fn finalize_output(output: Vec<u8>) -> String {
     }
 }
 
-/// Create a fresh `PrintState` with default capacities.
-fn new_print_state<'a>() -> PrintState<'a> {
+/// Create a fresh `PrintState` with a size hint for the output buffer.
+fn new_print_state<'a>(output_hint: usize) -> PrintState<'a> {
     PrintState {
         stack: Vec::with_capacity(64),
-        output: Vec::with_capacity(1024),
+        output: Vec::with_capacity(output_hint.max(1024)),
 
         current_line_len: 0,
         indent_delta: 0,
@@ -830,9 +830,15 @@ fn new_print_state<'a>() -> PrintState<'a> {
 /// Takes a document and a printer configuration and returns a String.
 /// Uses a stack to avoid recursion, keeping track of the current line length,
 /// and indent level.
-pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
+pub fn pprint<'a>(doc: impl Into<Doc<'a>>, printer: Printer) -> String {
+    pprint_with_hint(doc, printer, 1024)
+}
+
+/// Pretty-print with an output buffer size hint. Use `input.len()` for
+/// formatted output that's roughly the same size as the input.
+pub fn pprint_with_hint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer, output_hint: usize) -> String {
     let doc = doc.into();
-    let mut state = new_print_state();
+    let mut state = new_print_state(output_hint);
 
     state.stack.push(PrintItem {
         doc: &doc,
@@ -847,12 +853,13 @@ pub fn pprint<'a>(doc: impl Into<Doc<'a>>, mut printer: Printer) -> String {
 }
 
 /// Pretty-print a document by reference, avoiding cloning.
-///
-/// Same as `pprint()` but borrows the Doc tree instead of consuming it.
-/// Useful for benchmarks and when the same Doc tree needs to be rendered
-/// multiple times (e.g., LSP formatting).
-pub fn pprint_ref<'a>(doc: &'a Doc<'a>, mut printer: Printer) -> String {
-    let mut state = new_print_state();
+pub fn pprint_ref<'a>(doc: &'a Doc<'a>, printer: Printer) -> String {
+    pprint_ref_with_hint(doc, printer, 1024)
+}
+
+/// Pretty-print by reference with an output buffer size hint.
+pub fn pprint_ref_with_hint<'a>(doc: &'a Doc<'a>, mut printer: Printer, output_hint: usize) -> String {
+    let mut state = new_print_state(output_hint);
 
     state.stack.push(PrintItem {
         doc,
