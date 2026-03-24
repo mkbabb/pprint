@@ -1,6 +1,9 @@
 pub mod doc;
 pub use doc::*;
 
+pub mod events;
+pub use events::*;
+
 pub mod print;
 pub use print::*;
 
