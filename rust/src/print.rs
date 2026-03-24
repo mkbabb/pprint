@@ -53,6 +53,7 @@ fn is_literal_doc(doc: &Doc) -> bool {
         | Doc::SmallBytes(_, _)
         | Doc::Bytes(_, _)
         | Doc::String(_)
+        | Doc::Text(_, _)
         | Doc::i8(_)
         | Doc::i16(_)
         | Doc::i32(_)
@@ -117,6 +118,7 @@ fn literal_text_length(doc: &Doc, printer: &Printer) -> Option<usize> {
         Doc::SmallBytes(_, len) => Some(*len),
         Doc::Bytes(_, len) => Some(*len),
         Doc::String(s) => Some(s.len()),
+        Doc::Text(_, len) => Some(*len as usize),
         Doc::i8(value) => Some(value.len()),
         Doc::i16(value) => Some(value.len()),
         Doc::i32(value) => Some(value.len()),
@@ -218,6 +220,7 @@ fn count_text_length<'a>(
         | Doc::SmallBytes(_, _)
         | Doc::Bytes(_, _)
         | Doc::String(_)
+        | Doc::Text(_, _)
         | Doc::i8(_)
         | Doc::i16(_)
         | Doc::i32(_)
@@ -383,6 +386,11 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
             s.len()
         }
 
+        Doc::Text(s, len) => {
+            state.output.extend_from_slice(s.as_bytes());
+            *len as usize
+        }
+
         Doc::i8(v) => format_int(*v, state),
         Doc::i16(v) => format_int(*v, state),
         Doc::i32(v) => format_int(*v, state),
@@ -441,6 +449,7 @@ fn handle_literal<'a>(doc: &'a Doc<'a>, state: &mut PrintState<'a>, printer: &mu
         | Doc::SmallBytes(_, _)
         | Doc::Bytes(_, _)
         | Doc::String(_)
+        | Doc::Text(_, _)
         | Doc::i8(_)
         | Doc::i16(_)
         | Doc::i32(_)
@@ -758,6 +767,7 @@ macro_rules! render_loop {
                 | Doc::SmallBytes(_, _)
                 | Doc::Bytes(_, _)
                 | Doc::String(_)
+                | Doc::Text(_, _)
                 | Doc::i8(_)
                 | Doc::i16(_)
                 | Doc::i32(_)

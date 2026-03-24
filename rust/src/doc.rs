@@ -23,6 +23,11 @@ pub enum Doc<'a> {
 
     String(Cow<'a, str>),
 
+    /// Borrowed text with pre-computed byte length. Avoids re-measuring at render
+    /// time. Emitted by grammar-derived to_doc() where the Span's byte extent
+    /// is already known from parsing.
+    Text(&'a str, u32),
+
     i8(i8),
     i16(i16),
     i32(i32),
@@ -133,6 +138,12 @@ pub fn bytes<'a>(value: &[u8], len: usize) -> Doc<'a> {
     } else {
         Doc::Bytes(value[..len].into(), len)
     }
+}
+
+/// A borrowed string with pre-computed byte length. Avoids re-measuring at
+/// render time when the length is already known (e.g., from Span offsets).
+pub fn text<'a>(s: &'a str) -> Doc<'a> {
+    Doc::Text(s, s.len() as u32)
 }
 
 /// Group a document if it contains a line break.
