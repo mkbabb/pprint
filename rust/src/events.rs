@@ -301,6 +301,11 @@ struct JoinState {
     breaks: Vec<usize>,
     current_item: usize,
     parent_break: bool,
+    base_indent: usize,
+    /// Highest indent seen during the current item's processing.
+    /// Used for the NEXT separator's break indent, replicating the tree
+    /// renderer's indent-leak behavior.
+    item_peak_indent: usize,
 }
 
 /// Pending line break from a Join separator. Deferred until after the item's
@@ -372,6 +377,12 @@ pub fn render_events<'a>(events: &DocEvents<'a>, printer: &Printer) -> String {
             }
             DocEvent::Indent => {
                 indent += printer.indent;
+                // Track peak indent for Join separator break level.
+                if let Some(js) = join_stack.last_mut() {
+                    if indent > js.item_peak_indent {
+                        js.item_peak_indent = indent;
+                    }
+                }
             }
             DocEvent::Dedent => {
                 indent = indent.saturating_sub(printer.indent);
@@ -460,6 +471,8 @@ pub fn render_events<'a>(events: &DocEvents<'a>, printer: &Printer) -> String {
                     breaks: join_breaks,
                     current_item: 0,
                     parent_break,
+                    base_indent: indent,
+                    item_peak_indent: indent,
                 });
                 // Don't let the outer i += 1 skip the first JoinItemStart.
                 continue;
@@ -487,15 +500,24 @@ pub fn render_events<'a>(events: &DocEvents<'a>, printer: &Printer) -> String {
                         };
 
                         if sep_has_hardline || should_break {
-                            // Emit break immediately at the CURRENT (parent's) indent.
-                            // The item's own Indent events will adjust indent for its content.
+                            // Use the item's first-level indent for the break.
+                            // The tree renderer leaks exactly ONE level of Indent
+                            // from the item (from @pretty group indent normalization).
+                            let break_indent = if js.item_peak_indent > js.base_indent {
+                                // Item had Indent: use one level above base.
+                                js.base_indent + printer.indent
+                            } else {
+                                js.base_indent
+                            };
                             strip_trailing_whitespace(&mut output);
-                            emit_newline(&mut output, indent);
-                            line_len = indent;
+                            emit_newline(&mut output, break_indent);
+                            line_len = break_indent;
                         } else {
                             // Emit separator content inline (non-Hardline separators like ", ").
+                            // Render separator events with IfBreak support.
                             break_stack.push(item_bm);
-                            for si in js.sep_start..js.sep_end {
+                            let mut si = js.sep_start;
+                            while si < js.sep_end {
                                 match evs[si] {
                                     DocEvent::Text(s, len) => {
                                         output.extend_from_slice(s.as_bytes());
@@ -512,8 +534,28 @@ pub fn render_events<'a>(events: &DocEvents<'a>, printer: &Printer) -> String {
                                             line_len += 1;
                                         }
                                     }
+                                    DocEvent::Hardline => {
+                                        strip_trailing_whitespace(&mut output);
+                                        emit_newline(&mut output, indent);
+                                        line_len = indent;
+                                    }
+                                    DocEvent::IfBreak(break_len) => {
+                                        if item_bm {
+                                            si += 1; // enter break branch
+                                            continue;
+                                        } else {
+                                            si += 1 + break_len as usize + 1; // skip to fit branch
+                                            continue;
+                                        }
+                                    }
+                                    DocEvent::IfElse => {
+                                        si = skip_to_if_end(&evs[..js.sep_end], si + 1);
+                                        continue;
+                                    }
+                                    DocEvent::IfEnd => {}
                                     _ => {}
                                 }
+                                si += 1;
                             }
                             break_stack.pop();
                         }
@@ -528,11 +570,12 @@ pub fn render_events<'a>(events: &DocEvents<'a>, printer: &Printer) -> String {
                     break_stack.push(item_bm);
 
                     js.current_item += 1;
+                    // Reset peak indent for the next item.
+                    js.item_peak_indent = indent;
                 }
             }
 
             DocEvent::JoinItemEnd => {
-                // Pop the item's break_mode.
                 break_stack.pop();
             }
 
