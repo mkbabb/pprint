@@ -84,6 +84,11 @@ impl<'a> Pretty<'a> for f64 {
     }
 }
 
+impl<'a> Pretty<'a> for () {
+    #[inline]
+    fn pretty(&'a self, _b: &mut FmtBuilder<'a>) {}
+}
+
 impl<'a> Pretty<'a> for bool {
     #[inline]
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
@@ -139,57 +144,45 @@ impl<'a, T: Pretty<'a>> Pretty<'a> for Option<T> {
 
 // ── Collection impls ────────────────────────────────────────────────────────
 
-/// Helper: emit a list of items with group/indent/break structure.
+/// Helper: emit a list of items with wrap/sep structure.
 fn pretty_list<'a>(
     b: &mut FmtBuilder<'a>,
     open: u8,
     close: u8,
+    empty: &'a str,
     len: usize,
     mut emit: impl FnMut(&mut FmtBuilder<'a>, usize),
 ) {
     if len == 0 {
-        b.char(open);
-        b.char(close);
+        b.str(empty);
         return;
     }
-    b.group(|b| {
-        b.char(open);
-        b.indent(|b| {
-            b.break_line();
-            for i in 0..len {
-                if i > 0 {
-                    b.if_break(
-                        |b| {
-                            b.char(b',');
-                            b.hardline();
-                        },
-                        |b| b.str(", "),
-                    );
-                }
-                emit(b, i);
+    b.wrap(open, close, |b| {
+        for i in 0..len {
+            if i > 0 {
+                b.comma_sep();
             }
-        });
-        b.break_line();
-        b.char(close);
+            emit(b, i);
+        }
     });
 }
 
 impl<'a, T: Pretty<'a>> Pretty<'a> for Vec<T> {
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
-        pretty_list(b, b'[', b']', self.len(), |b, i| self[i].pretty(b));
+        pretty_list(b, b'[', b']', "[]", self.len(), |b, i| self[i].pretty(b));
     }
 }
 
 impl<'a, T: Pretty<'a>> Pretty<'a> for [T] {
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
-        pretty_list(b, b'[', b']', self.len(), |b, i| self[i].pretty(b));
+        pretty_list(b, b'[', b']', "[]", self.len(), |b, i| self[i].pretty(b));
     }
 }
 
 impl<'a, K: Pretty<'a>, V: Pretty<'a>> Pretty<'a> for HashMap<K, V> {
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
         let entries: Vec<_> = self.iter().collect();
-        pretty_list(b, b'{', b'}', entries.len(), |b, i| {
+        pretty_list(b, b'{', b'}', "{}", entries.len(), |b, i| {
             let (k, v) = entries[i];
             k.pretty(b);
             b.str(": ");
@@ -201,7 +194,7 @@ impl<'a, K: Pretty<'a>, V: Pretty<'a>> Pretty<'a> for HashMap<K, V> {
 impl<'a, T: Pretty<'a>> Pretty<'a> for HashSet<T> {
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
         let items: Vec<_> = self.iter().collect();
-        pretty_list(b, b'{', b'}', items.len(), |b, i| items[i].pretty(b));
+        pretty_list(b, b'{', b'}', "{}", items.len(), |b, i| items[i].pretty(b));
     }
 }
 
@@ -211,24 +204,15 @@ macro_rules! impl_pretty_tuple {
     ($($T:ident $idx:tt),+) => {
         impl<'a, $($T: Pretty<'a>),+> Pretty<'a> for ($($T,)+) {
             fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
-                b.group(|b| {
-                    b.char(b'(');
-                    b.indent(|b| {
-                        b.break_line();
-                        let mut _first = true;
-                        $(
-                            if !_first {
-                                b.if_break(
-                                    |b| { b.char(b','); b.hardline(); },
-                                    |b| b.str(", "),
-                                );
-                            }
-                            _first = false;
-                            self.$idx.pretty(b);
-                        )+
-                    });
-                    b.break_line();
-                    b.char(b')');
+                b.wrap(b'(', b')', |b| {
+                    let mut _first = true;
+                    $(
+                        if !_first {
+                            b.comma_sep();
+                        }
+                        _first = false;
+                        self.$idx.pretty(b);
+                    )+
                 });
             }
         }
