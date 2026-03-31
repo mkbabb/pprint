@@ -14,12 +14,15 @@ categories = ["text-processing", "development-tools"]
 name = "pprint"
 path = "src/lib.rs"
 
+[features]
+default = []
+regex = ["dep:regex"]
+
 [dependencies]
 dragonbox = "0.1.8"
 itoap = "1.0.1"
 pprint_derive = { path = "./derive", version = "0.2.2" }
-regex = "1.11"
-rustc-hash = "2"
+regex = { version = "1.11", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
