@@ -150,8 +150,8 @@ Throughput varies by workload. Compared against `std::fmt::Debug` (`{:#?}`) and 
 
 These numbers should be taken with a grain of salt — microbenchmarks on a single machine,
 and the `pretty` crate comparison isn't entirely apples-to-apples since it builds Rc-based
-doc trees rather than flat buffers. The architectural gap is real, but your mileage will
-vary depending on workload and allocation pressure.
+doc trees rather than flat buffers. Your mileage will vary depending on workload and
+allocation pressure.
 
 ### Render Optimizations
 
