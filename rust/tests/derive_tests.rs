@@ -1,118 +1,198 @@
-#[cfg(test)]
-mod tests {
-    use pprint::{Doc, PRINTER, Pretty, Wrap, join, pprint};
+use pprint::{PRINTER, Pretty, Printer, pprint};
 
-    use std::collections::HashMap;
-    use std::fmt::Debug;
+// ── Test types ──────────────────────────────────────────────────────────────
 
-    #[derive(Pretty, Debug)]
-    #[pprint(verbose)]
-    pub enum HeyEnum<'a> {
-        There(&'a str),
+#[derive(Pretty, Debug)]
+struct SimpleStruct {
+    x: i32,
+    y: i32,
+}
 
-        #[pprint(rename = "MyEnum::A")]
-        A,
+#[derive(Pretty, Debug)]
+struct TupleStruct(i32, f64);
 
-        B(regex::Regex),
-    }
+#[derive(Pretty, Debug)]
+struct UnitStruct;
 
-    #[derive(Pretty, Debug)]
-    #[pprint(verbose, rename = "Inner")]
-    pub struct InnerStrumct<'a> {
-        x: &'a str,
-        y: HeyEnum<'a>,
-        z: (u128, usize, usize, usize),
-    }
+#[derive(Pretty, Debug)]
+#[pprint(verbose)]
+struct VerboseStruct {
+    name: String,
+    count: u64,
+}
 
-    #[derive(Pretty, Debug)]
-    #[pprint(verbose)]
-    pub struct Strumct<'a> {
-        a: Vec<i32>,
-        b: HashMap<String, HeyEnum<'a>>,
-        c: InnerStrumct<'a>,
+#[derive(Pretty, Debug)]
+#[pprint(verbose, rename = "MyStruct")]
+struct RenamedStruct {
+    value: i32,
+}
 
-        #[pprint(skip)]
-        _no: usize,
-    }
+#[derive(Pretty, Debug)]
+struct SkipStruct {
+    a: i32,
+    #[pprint(skip)]
+    _b: i32,
+    c: i32,
+}
 
-    #[derive(Pretty, Debug)]
-    #[pprint(verbose)]
-    pub struct VecStruct<'a> {
-        a: Vec<usize>,
-        b: &'a str,
-    }
+#[derive(Pretty, Debug)]
+#[pprint(verbose)]
+enum TestEnum {
+    UnitA,
+    #[pprint(rename = "CustomB")]
+    UnitB,
+    Single(i32),
+    Multi(i32, i32),
+    #[pprint(skip)]
+    Skipped(i32),
+}
 
-    #[test]
-    fn test_vec() {
-        // let s = join(Doc::DoubleDoc(Doc::from(", ").into(), Doc::from(", ").into()), vec![
-        //     Doc::from("a"),
-        //     Doc::Hardline,
-        //     Doc::Concat(vec![Doc::from(1), Doc::from(2), Doc::from(3)]),
-        //     Doc::Hardline,
-        //     Doc::from("b"),
-        //     Doc::from("c"),
-        // ])
-        // .wrap(Doc::from("["), Doc::from("]"));
-        let s = join(
-            Doc::DoubleDoc(Doc::from(",").into(), Doc::Hardline.into()),
-            vec![Doc::from(1), Doc::from(2), Doc::from(3)],
-        )
-        .wrap(Doc::from("["), Doc::from("]"));
+#[derive(Pretty, Debug)]
+struct Nested {
+    inner: SimpleStruct,
+    value: i32,
+}
 
-        let pretty = pprint(s, PRINTER);
-        println!("{}", pretty);
-    }
+#[derive(Pretty, Debug)]
+struct GenericStruct<T> {
+    value: T,
+}
 
-    #[test]
-    fn test_enum() {
-        let s = HeyEnum::There("there");
+// ── Struct tests ────────────────────────────────────────────────────────────
 
-        let pretty = pprint(s, PRINTER);
-        println!("{}", pretty);
-    }
+#[test]
+fn test_struct_simple() {
+    let s = SimpleStruct { x: 1, y: 2 };
+    let out = pprint(&s, PRINTER);
+    assert_eq!(out, "{x: 1, y: 2}");
+}
 
-    #[test]
-    fn test_simple_struct() {
-        let s = InnerStrumct {
-            x: "hello",
-            y: HeyEnum::There("there"),
-            z: (u128::MAX, 2, 3, 4),
-        };
+#[test]
+fn test_struct_unnamed() {
+    let s = TupleStruct(42, 3.14);
+    let out = pprint(&s, PRINTER);
+    assert!(out.contains("field_0: 42"), "got: {out}");
+    assert!(out.contains("field_1: 3.14"), "got: {out}");
+}
 
-        let pretty = pprint(s, PRINTER);
-        println!("{}", pretty);
-    }
+#[test]
+fn test_struct_unit() {
+    let s = UnitStruct;
+    let out = pprint(&s, PRINTER);
+    assert_eq!(out, "UnitStruct");
+}
 
-    #[test]
-    fn test_complex_struct() {
-        let a = vec![
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8,
-            9, 10,
-        ];
-        let a: Vec<_> = a.into_iter().collect();
+#[test]
+fn test_struct_verbose() {
+    let s = VerboseStruct {
+        name: "hello".into(),
+        count: 42,
+    };
+    let out = pprint(&s, PRINTER);
+    assert!(out.starts_with("VerboseStruct"), "got: {out}");
+    assert!(out.contains("name: hello"), "got: {out}");
+    assert!(out.contains("count: 42"), "got: {out}");
+}
 
-        let mut b = HashMap::new();
-        b.insert("hello".to_string(), HeyEnum::There("there"));
-        b.insert("a".to_string(), HeyEnum::A);
-        b.insert(
-            "b".to_string(),
-            HeyEnum::B(regex::Regex::new(".*").unwrap()),
-        );
+#[test]
+fn test_struct_rename() {
+    let s = RenamedStruct { value: 7 };
+    let out = pprint(&s, PRINTER);
+    assert!(out.starts_with("MyStruct"), "got: {out}");
+    assert!(out.contains("value: 7"), "got: {out}");
+}
 
-        let s = Strumct {
-            a,
-            b,
-            c: InnerStrumct {
-                x: "hello",
-                y: HeyEnum::There("there"),
-                z: (1, 2, 3, 4),
-            },
+#[test]
+fn test_struct_skip() {
+    let s = SkipStruct {
+        a: 1,
+        _b: 99,
+        c: 3,
+    };
+    let out = pprint(&s, PRINTER);
+    assert!(out.contains("a: 1"), "got: {out}");
+    assert!(!out.contains("99"), "skipped field should not appear: {out}");
+    assert!(out.contains("c: 3"), "got: {out}");
+}
 
-            _no: 0,
-        };
+// ── Enum tests ──────────────────────────────────────────────────────────────
 
-        let pretty = pprint(s, PRINTER);
-        println!("{}", pretty);
-        // println!("{:#?}", s);
-    }
+#[test]
+fn test_enum_unit() {
+    let e = TestEnum::UnitA;
+    let out = pprint(&e, PRINTER);
+    assert_eq!(out, "UnitA");
+}
+
+#[test]
+fn test_enum_unit_renamed() {
+    let e = TestEnum::UnitB;
+    let out = pprint(&e, PRINTER);
+    assert_eq!(out, "CustomB");
+}
+
+#[test]
+fn test_enum_single() {
+    let e = TestEnum::Single(42);
+    let out = pprint(&e, PRINTER);
+    assert!(out.contains("Single"), "got: {out}");
+    assert!(out.contains("42"), "got: {out}");
+}
+
+#[test]
+fn test_enum_multi() {
+    let e = TestEnum::Multi(1, 2);
+    let out = pprint(&e, PRINTER);
+    assert!(out.contains("Multi"), "got: {out}");
+    assert!(out.contains("1"), "got: {out}");
+    assert!(out.contains("2"), "got: {out}");
+}
+
+#[test]
+#[should_panic(expected = "pprint(skip)")]
+fn test_enum_skip_panics() {
+    let e = TestEnum::Skipped(42);
+    pprint(&e, PRINTER);
+}
+
+// ── Nesting and generics ────────────────────────────────────────────────────
+
+#[test]
+fn test_nested_derive() {
+    let s = Nested {
+        inner: SimpleStruct { x: 10, y: 20 },
+        value: 42,
+    };
+    let out = pprint(&s, PRINTER);
+    assert!(out.contains("inner:"), "got: {out}");
+    assert!(out.contains("x: 10"), "got: {out}");
+    assert!(out.contains("value: 42"), "got: {out}");
+}
+
+#[test]
+fn test_generic_struct() {
+    let s = GenericStruct { value: 42i32 };
+    let out = pprint(&s, PRINTER);
+    assert!(out.contains("value: 42"), "got: {out}");
+}
+
+// ── Width sensitivity ───────────────────────────────────────────────────────
+
+#[test]
+fn test_width_sensitivity() {
+    let s = Nested {
+        inner: SimpleStruct { x: 100, y: 200 },
+        value: 300,
+    };
+
+    let wide = pprint(&s, Printer::new(120, 4, false));
+    let wide_lines = wide.lines().count();
+
+    let narrow = pprint(&s, Printer::new(20, 4, false));
+    let narrow_lines = narrow.lines().count();
+
+    assert!(
+        narrow_lines > wide_lines,
+        "narrow ({narrow_lines} lines) should have more lines than wide ({wide_lines})\nnarrow:\n{narrow}\nwide:\n{wide}"
+    );
 }
