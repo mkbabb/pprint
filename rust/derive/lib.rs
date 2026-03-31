@@ -155,9 +155,9 @@ fn generate_field_emissions(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
                 };
             }
 
+            let label = format!("{display_name}: ");
             Some(quote! {
-                __b.str(#display_name);
-                __b.str(": ");
+                __b.str(#label);
                 #emit
             })
         };
@@ -211,10 +211,7 @@ fn generate_struct_body(
                     if i + 1 < n {
                         quote! {
                             #emit
-                            __b.if_break(
-                                |__b| { __b.char(b','); __b.hardline(); },
-                                |__b| __b.str(", "),
-                            );
+                            __b.comma_sep();
                         }
                     } else {
                         emit
@@ -223,14 +220,8 @@ fn generate_struct_body(
                 .collect();
 
             let body = quote! {
-                __b.group(|__b| {
-                    __b.char(b'{');
-                    __b.indent(|__b| {
-                        __b.break_line();
-                        #(#fields_with_seps)*
-                    });
-                    __b.break_line();
-                    __b.char(b'}');
+                __b.wrap(b'{', b'}', |__b| {
+                    #(#fields_with_seps)*
                 });
             };
 
@@ -381,10 +372,7 @@ fn generate_variant_body(
             if i + 1 < n {
                 quote! {
                     #emit
-                    __b.if_break(
-                        |__b| { __b.char(b','); __b.hardline(); },
-                        |__b| __b.str(", "),
-                    );
+                    __b.comma_sep();
                 }
             } else {
                 emit
@@ -393,14 +381,8 @@ fn generate_variant_body(
         .collect();
 
     let body = quote! {
-        __b.group(|__b| {
-            __b.char(b'(');
-            __b.indent(|__b| {
-                __b.break_line();
-                #(#field_emissions)*
-            });
-            __b.break_line();
-            __b.char(b')');
+        __b.wrap(b'(', b')', |__b| {
+            #(#field_emissions)*
         });
     };
 
