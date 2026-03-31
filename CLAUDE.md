@@ -7,8 +7,8 @@ Flexible and lightweight pretty printing library — Rust + TypeScript monorepo.
 ```
 rust/                      Rust workspace
   Cargo.toml
-  src/                     lib.rs, doc.rs, print.rs, utils.rs, dtoa/
-  derive/                  pprint_derive proc macro
+  src/                     lib.rs, op.rs, builder.rs, render.rs, pretty.rs, utils.rs, dtoa/
+  derive/                  pprint_derive proc macro (#[derive(Pretty)])
   benches/
   tests/
 typescript/                TS library
@@ -26,13 +26,23 @@ cargo test
 cargo clippy --workspace -- -D warnings
 ```
 
-## Rust Structure
-rust/src/lib.rs         # crate root, re-exports
-rust/src/doc.rs         # Doc IR — Nil, Text, Hardline, Concat, Nest, Group, Join, SmartJoin, LinearJoin, etc.
-rust/src/print.rs       # Wadler-Lindig-inspired printer — stack-based layout engine, dtoa
-rust/src/utils.rs       # text_justify greedy algorithm for SmartJoin line breaking
-rust/src/dtoa/          # fast f64→string (Schubfach algorithm)
-rust/derive/            # pprint_derive proc macro (#[derive(Pretty)])
+## Rust Architecture
+
+The formatting pipeline is a **flat-buffer instruction set** (FmtOp) with a linear O(n) renderer.
+
+### Core modules
+- `rust/src/op.rs` — `FmtOp` enum: Text, Char, I64, U64, I128, U128, F64, GroupStart/End, IndentStart/End, Hardline, Softline, BreakLine, Mediumline, IfBreak
+- `rust/src/builder.rs` — `FmtBuilder`: constructs `Vec<FmtOp>` with auto `GroupStart.flat_width` patching
+- `rust/src/render.rs` — Linear-scan renderer, `Printer` config struct, `render()`/`render_with_hint()`
+- `rust/src/pretty.rs` — `Pretty` trait, `pprint()` entry point, impls for all std types
+- `rust/src/utils.rs` — `text_justify` greedy bin-packing for SmartJoin
+- `rust/src/dtoa/` — `DigitCount` trait (integer width), `count_u64_digits()`, `udivmod_1e19()`
+- `rust/derive/` — `#[derive(Pretty)]` proc macro generates `Pretty<'a>` impls
+
+### Dependencies
+- `dragonbox = "0.1.8"` — fast f64→string (Dragonbox algorithm)
+- `itoap = "1.0.1"` — fast integer→string
+- `regex` — optional, behind `features = ["regex"]`
 
 ## Dependency Graph
 
@@ -56,35 +66,35 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 ## Conventions
 - Edition 2024, rust-version 1.85 (nightly)
 - Zero clippy warnings (`-D warnings` in CI)
-- `Doc` is the core IR; all formatting builds a `Doc` tree, then `pprint()` renders it
-- Derive macro uses `#[pprint(rename = "...")]` and `#[pprint(skip)]` / `#[pprint(ignore)]` attributes
-- `Printer` is `Copy`—all fields are `usize`/`bool`
-- `count_text_length()` is memoized via `FxHashMap<*const Doc, usize>` in `PrintState` (rustc-hash for faster hashing)
-- `SmartJoin` reuses `doc_lengths: Vec<usize>` across calls (cleared, not reallocated)
-- `SmartJoin` uses reverse-iterating cursor for break checks — O(1) per item, not binary_search O(log n)
-- `LinearJoin` — inline break decisions during render, no text_justify pre-pass. Best for code formatting.
-- `SmartJoin` — greedy bin-packing via text_justify. Best for prose/text justification.
-- `Join` — delegates all break decisions to enclosing Group/IfBreak. No autonomous breaks.
-- `text_justify` memo buffer pooled in `PrintState`—reused across SmartJoin calls, no per-call allocation
-- `pprint_ref(&Doc, Option<Printer>) -> String` — renders by reference without consuming or cloning
-- No full-tree pre-pass — output buffer starts at fixed 1024 capacity, `count_text_length` only called lazily by Group/Join
-- `space_cache` pre-allocated to 128 bytes
-- `Join`/`SmartJoin`/`LinearJoin` use tuple-boxed form `Box<(Doc, Vec<Doc>)>` to reduce Doc enum size
-- Release builds use `String::from_utf8_unchecked` — all Doc sources produce valid UTF-8
-- Group flat-mode check accounts for `current_line_len` (Wadler-Lindig correct)
-- `IfBreak` propagates `break_mode` through `PrintItem` stack (no fragile peek heuristic)
-- `Bytes`/`SmallBytes` validated at finalize_output time (release: `from_utf8_unchecked`, debug: `from_utf8().expect()`)
-- `handle_literal` emits bytes directly to output buffer; space-coalescing removed (opaque spans handle their own whitespace)
+- `FmtOp` is the core instruction set; all formatting builds a `Vec<FmtOp>`, then `render()` executes it
+- `Pretty<'a>` trait: `fn pretty(&'a self, b: &mut FmtBuilder<'a>)` — zero-copy text emission via lifetime tie
+- `pprint(&value, PRINTER)` — main entry point, builds ops then renders
+- `Printer` is `Copy` — `max_width: usize`, `indent: usize`, `use_tabs: bool`
+- `PRINTER` constant: 80 cols, 4 spaces, no tabs
+- `FmtOp` is `Copy`, ~24 bytes per variant — no Box allocations, no pointer chasing
+- `GroupStart.flat_width` pre-computed by `FmtBuilder` during construction — O(1) break decisions
+- Numeric FmtOp variants (I64, U64, I128, U128, F64) rendered inline by `render()` using itoap/dragonbox
+- `DigitCount` trait provides integer width for `FmtBuilder` flat_width tracking
+- F64 flat_width uses conservative upper bound (24 bytes)
+- `SmartJoin` — greedy bin-packing via text_justify, cursor walk (no HashSet)
+- `LinearJoin` — inline greedy breaking during build
+- `Join` — delegates break decisions to enclosing Group/IfBreak
+- `Mediumline` — breaks when `current_line_len > max_width / 2`
+- Derive macro `#[derive(Pretty)]` generates `Pretty<'a>` impls with FmtBuilder calls
+- Derive attributes: `#[pprint(skip)]`, `#[pprint(indent)]`, `#[pprint(verbose)]`, `#[pprint(rename = "...")]`, `#[pprint(getter = "...")]`
+- Release builds use `String::from_utf8_unchecked` — all sources produce valid UTF-8
 
 ## Testing
 ```bash
-cd rust && cargo test    # 16 tests: 4 derive + 12 digit_count
+cd rust && cargo test    # 61 tests: 22 builder + 14 derive + 12 digit_count + 13 pretty
 ```
 
 ## Benchmarks
 ```bash
-cd rust && cargo bench   # 26 benchmarks: 14 pprint + 12 digit_count
+cd rust && cargo bench   # 28 benchmarks: 16 pprint + 12 digit_count
 ```
-- pprint benches: flat_vec (1k/10k), nested_100x100, floats_1k, strings_1k, tuples_1k, narrow_40col, wide_120col
+- pprint benches: flat_vec (1k/10k), nested, floats, strings, tuples, narrow_40, wide_120
+- Build-only and render-only microbenchmarks
+- Deep nesting (50-level) and many-groups (1k) stress tests
 - Each pprint bench has a `Debug` counterpart for direct comparison
 - digit_count benches: all integer types (i8–i128, u8–u128, isize, usize)
