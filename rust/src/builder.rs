@@ -101,6 +101,62 @@ impl<'a> FmtBuilder<'a> {
         self.ops.push(FmtOp::Text(s));
     }
 
+    // ── Numeric ops ────────────────────────────────────────────
+
+    /// Emit a signed 64-bit integer (rendered inline by the renderer).
+    #[inline]
+    pub fn i64(&mut self, v: i64) {
+        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.ops.push(FmtOp::I64(v));
+    }
+
+    /// Emit an unsigned 64-bit integer (rendered inline by the renderer).
+    #[inline]
+    pub fn u64(&mut self, v: u64) {
+        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.ops.push(FmtOp::U64(v));
+    }
+
+    /// Emit a signed 128-bit integer.
+    #[inline]
+    pub fn i128(&mut self, v: i128) {
+        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.ops.push(FmtOp::I128(v));
+    }
+
+    /// Emit an unsigned 128-bit integer.
+    #[inline]
+    pub fn u128(&mut self, v: u128) {
+        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.ops.push(FmtOp::U128(v));
+    }
+
+    /// Emit a 64-bit float (rendered with Dragonbox by the renderer).
+    /// Uses a conservative upper-bound (24) for flat_width estimation.
+    #[inline]
+    pub fn f64(&mut self, v: f64) {
+        self.running_width += 24; // dragonbox max output length
+        self.ops.push(FmtOp::F64(v));
+    }
+
+    /// Emit a signed integer, widening to i64.
+    #[inline]
+    pub fn int(&mut self, v: impl Into<i64>) {
+        self.i64(v.into());
+    }
+
+    /// Emit an unsigned integer, widening to u64.
+    #[inline]
+    pub fn uint(&mut self, v: impl Into<u64>) {
+        self.u64(v.into());
+    }
+
+    /// Emit a float, widening to f64.
+    #[inline]
+    pub fn float(&mut self, v: impl Into<f64>) {
+        self.f64(v.into());
+    }
+
     // ── Line ops ─────────────────────────────────────────────────
 
     /// Unconditional line break.
@@ -123,6 +179,13 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn break_line(&mut self) {
         self.ops.push(FmtOp::BreakLine);
+        // flat-mode width = 0
+    }
+
+    /// Line break when `current_line_len > max_width / 2`, otherwise nothing.
+    #[inline]
+    pub fn mediumline(&mut self) {
+        self.ops.push(FmtOp::Mediumline);
         // flat-mode width = 0
     }
 
@@ -275,11 +338,11 @@ impl<'a> FmtBuilder<'a> {
         let mut breaks = Vec::new();
         text_justify(sep_width, &item_widths, max_width, first_line_offset, &mut breaks);
 
-        // Now interleave separators. We need to insert ops BETWEEN items.
-        // Rather than shifting the Vec, rebuild with separators.
+        // Interleave separators. Drain item ops and rebuild with separators.
         let all_item_ops: Vec<FmtOp<'a>> = self.ops.drain(items_start..).collect();
 
-        let mut break_set: std::collections::HashSet<usize> = breaks.into_iter().collect();
+        // breaks is already sorted — use a cursor walk instead of HashSet.
+        let mut break_cursor = 0;
 
         let n = item_starts.len();
         for i in 0..n {
@@ -290,13 +353,12 @@ impl<'a> FmtBuilder<'a> {
                 all_item_ops.len()
             };
             // Emit item ops.
-            for op in &all_item_ops[item_range_start..item_range_end] {
-                self.ops.push(*op);
-            }
+            self.ops.extend_from_slice(&all_item_ops[item_range_start..item_range_end]);
             // Emit separator (if not last item).
             if i + 1 < n {
-                if break_set.contains(&(i + 1)) {
+                if break_cursor < breaks.len() && breaks[break_cursor] == i + 1 {
                     self.hardline();
+                    break_cursor += 1;
                 } else {
                     self.str(flat_sep);
                 }
@@ -353,14 +415,17 @@ impl<'a> Default for FmtBuilder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::render;
+    use crate::render::{PRINTER, Printer, render};
+
+    fn r(ops: &[FmtOp<'_>], max_width: usize) -> String {
+        render(ops, Printer { max_width, ..PRINTER })
+    }
 
     #[test]
     fn test_basic_text() {
         let mut b = FmtBuilder::new();
         b.text("hello world");
-        let ops = b.finish();
-        assert_eq!(render(&ops, 80, 4), "hello world");
+        assert_eq!(r(&b.finish(), 80), "hello world");
     }
 
     #[test]
@@ -371,9 +436,7 @@ mod tests {
             b.softline();
             b.text("b");
         });
-        let ops = b.finish();
-        // Fits on one line → softline = space
-        assert_eq!(render(&ops, 80, 4), "a b");
+        assert_eq!(r(&b.finish(), 80), "a b");
     }
 
     #[test]
@@ -384,9 +447,7 @@ mod tests {
             b.softline();
             b.text("bbbb");
         });
-        let ops = b.finish();
-        // Doesn't fit on 6-wide line → softline = newline
-        assert_eq!(render(&ops, 6, 4), "aaaa\nbbbb");
+        assert_eq!(r(&b.finish(), 6), "aaaa\nbbbb");
     }
 
     #[test]
@@ -401,9 +462,7 @@ mod tests {
             b.softline();
             b.char(b'}');
         });
-        let ops = b.finish();
-        // Width 3 → breaks
-        assert_eq!(render(&ops, 3, 4), "{\n    x\n}");
+        assert_eq!(r(&b.finish(), 3), "{\n    x\n}");
     }
 
     #[test]
@@ -414,9 +473,7 @@ mod tests {
             b.hardline();
             b.text("b");
         });
-        let ops = b.finish();
-        // Hardline always breaks regardless of width
-        assert_eq!(render(&ops, 80, 4), "a\nb");
+        assert_eq!(r(&b.finish(), 80), "a\nb");
     }
 
     #[test]
@@ -431,9 +488,7 @@ mod tests {
             });
             b.text("]");
         });
-        let ops = b.finish();
-        // Outer group fits → inner group also flat
-        assert_eq!(render(&ops, 80, 4), "[a b]");
+        assert_eq!(r(&b.finish(), 80), "[a b]");
     }
 
     #[test]
@@ -453,9 +508,198 @@ mod tests {
             );
         });
         let ops = b.finish();
-        // Fits → flat branch
-        assert_eq!(render(&ops, 80, 4), "aaa bbb");
-        // Doesn't fit → break branch
-        assert_eq!(render(&ops, 5, 4), "aaa\nbbb");
+        assert_eq!(r(&ops, 80), "aaa bbb");
+        assert_eq!(r(&ops, 5), "aaa\nbbb");
+    }
+
+    // ── Numeric ops ─────────────────────────────────────────────
+
+    #[test]
+    fn test_numeric_i64() {
+        let mut b = FmtBuilder::new();
+        b.i64(42);
+        assert_eq!(r(&b.finish(), 80), "42");
+
+        let mut b = FmtBuilder::new();
+        b.i64(-1);
+        assert_eq!(r(&b.finish(), 80), "-1");
+
+        let mut b = FmtBuilder::new();
+        b.i64(i64::MIN);
+        assert_eq!(r(&b.finish(), 80), i64::MIN.to_string());
+    }
+
+    #[test]
+    fn test_numeric_u64() {
+        let mut b = FmtBuilder::new();
+        b.u64(0);
+        assert_eq!(r(&b.finish(), 80), "0");
+
+        let mut b = FmtBuilder::new();
+        b.u64(u64::MAX);
+        assert_eq!(r(&b.finish(), 80), u64::MAX.to_string());
+    }
+
+    #[test]
+    fn test_numeric_i128() {
+        let mut b = FmtBuilder::new();
+        b.i128(i128::MIN);
+        assert_eq!(r(&b.finish(), 80), i128::MIN.to_string());
+
+        let mut b = FmtBuilder::new();
+        b.i128(i128::MAX);
+        assert_eq!(r(&b.finish(), 80), i128::MAX.to_string());
+    }
+
+    #[test]
+    fn test_numeric_u128() {
+        let mut b = FmtBuilder::new();
+        b.u128(u128::MAX);
+        assert_eq!(r(&b.finish(), 80), u128::MAX.to_string());
+    }
+
+    #[test]
+    fn test_numeric_f64() {
+        let mut b = FmtBuilder::new();
+        b.f64(3.14);
+        let out = r(&b.finish(), 80);
+        assert!(out.starts_with("3.14"), "got: {out}");
+    }
+
+    #[test]
+    fn test_numeric_in_group() {
+        // Group with numbers that fits
+        let mut b = FmtBuilder::new();
+        b.group(|b| {
+            b.i64(1);
+            b.softline();
+            b.i64(2);
+        });
+        assert_eq!(r(&b.finish(), 80), "1 2");
+
+        // Group with numbers that doesn't fit → break
+        let mut b = FmtBuilder::new();
+        b.group(|b| {
+            b.i64(12345);
+            b.softline();
+            b.i64(67890);
+        });
+        assert_eq!(r(&b.finish(), 8), "12345\n67890");
+    }
+
+    #[test]
+    fn test_mixed_text_numeric() {
+        let mut b = FmtBuilder::new();
+        b.text("x = ");
+        b.i64(42);
+        b.text(", y = ");
+        b.f64(3.14);
+        let out = r(&b.finish(), 80);
+        assert!(out.starts_with("x = 42, y = 3.14"), "got: {out}");
+    }
+
+    // ── Mediumline ──────────────────────────────────────────────
+
+    #[test]
+    fn test_mediumline() {
+        // Under half-width: no break
+        let mut b = FmtBuilder::new();
+        b.text("short");
+        b.mediumline();
+        b.text("more");
+        assert_eq!(r(&b.finish(), 80), "shortmore");
+
+        // Over half-width: break
+        let mut b = FmtBuilder::new();
+        b.text("this is a long line that exceeds half");
+        b.mediumline();
+        b.text("next");
+        assert_eq!(r(&b.finish(), 40), "this is a long line that exceeds half\nnext");
+    }
+
+    // ── Join ops ────────────────────────────────────────────────
+
+    #[test]
+    fn test_join_empty() {
+        let mut b = FmtBuilder::new();
+        let items: Vec<&str> = vec![];
+        b.join(items.into_iter(), |b, s| b.text(s));
+        assert_eq!(r(&b.finish(), 80), "");
+    }
+
+    #[test]
+    fn test_join_single() {
+        let mut b = FmtBuilder::new();
+        b.join(["hello"].into_iter(), |b, s| b.text(s));
+        assert_eq!(r(&b.finish(), 80), "hello");
+    }
+
+    #[test]
+    fn test_smart_join_basic() {
+        let items = vec!["aaa", "bbb", "ccc", "ddd"];
+        let mut b = FmtBuilder::new();
+        b.smart_join(items.into_iter(), ", ", 15, 0, |b, s| b.text(s));
+        let out = r(&b.finish(), 80);
+        // At width 15: "aaa, bbb, ccc" = 13, fits. "aaa, bbb, ccc, ddd" = 18, breaks.
+        assert!(out.contains('\n'), "expected break in: {out}");
+    }
+
+    #[test]
+    fn test_smart_join_all_fit() {
+        let items = vec!["a", "b", "c"];
+        let mut b = FmtBuilder::new();
+        b.smart_join(items.into_iter(), ", ", 80, 0, |b, s| b.text(s));
+        assert_eq!(r(&b.finish(), 80), "a, b, c");
+    }
+
+    #[test]
+    fn test_linear_join_basic() {
+        let items = vec!["aaa", "bbb", "ccc", "ddd"];
+        let mut b = FmtBuilder::new();
+        b.linear_join(items.into_iter(), ", ", 12, |b, s| b.text(s));
+        let out = r(&b.finish(), 80);
+        // At width 12: "aaa, bbb" = 8, "aaa, bbb, ccc" = 13 > 12, so break before ccc
+        assert!(out.contains('\n'), "expected break in: {out}");
+    }
+
+    // ── Deep nesting ────────────────────────────────────────────
+
+    #[test]
+    fn test_deep_nesting() {
+        let mut b = FmtBuilder::new();
+        // 10 nested groups with indent
+        for _ in 0..10 {
+            b.group_open();
+            b.indent_open();
+            b.softline();
+        }
+        b.text("deep");
+        for _ in 0..10 {
+            b.indent_close();
+            b.group_close();
+        }
+        let out = r(&b.finish(), 3);
+        // Should produce deeply indented output
+        assert!(out.contains("deep"));
+        assert!(out.contains('\n'));
+    }
+
+    // ── use_tabs ────────────────────────────────────────────────
+
+    #[test]
+    fn test_use_tabs() {
+        let mut b = FmtBuilder::new();
+        b.group(|b| {
+            b.char(b'{');
+            b.indent(|b| {
+                b.softline();
+                b.text("x");
+            });
+            b.softline();
+            b.char(b'}');
+        });
+        let ops = b.finish();
+        let out = render(&ops, Printer { max_width: 3, indent: 1, use_tabs: true });
+        assert_eq!(out, "{\n\tx\n}");
     }
 }
