@@ -117,18 +117,20 @@ impl<'a> FmtBuilder<'a> {
         self.ops.push(FmtOp::U64(v));
     }
 
-    /// Emit a signed 128-bit integer.
+    /// Emit a signed 128-bit integer (wide-op: emits two consecutive ops).
     #[inline]
     pub fn i128(&mut self, v: i128) {
         self.running_width += crate::DigitCount::len(&v) as u32;
-        self.ops.push(FmtOp::I128(v));
+        self.ops.push(FmtOp::I128Hi((v >> 64) as u64));
+        self.ops.push(FmtOp::I128Lo(v as u64));
     }
 
-    /// Emit an unsigned 128-bit integer.
+    /// Emit an unsigned 128-bit integer (wide-op: emits two consecutive ops).
     #[inline]
     pub fn u128(&mut self, v: u128) {
         self.running_width += crate::DigitCount::len(&v) as u32;
-        self.ops.push(FmtOp::U128(v));
+        self.ops.push(FmtOp::U128Hi((v >> 64) as u64));
+        self.ops.push(FmtOp::U128Lo(v as u64));
     }
 
     /// Emit a 64-bit float (rendered with Dragonbox by the renderer).
@@ -205,7 +207,8 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn group_open(&mut self) {
         let pos = self.ops.len();
-        self.ops.push(FmtOp::GroupStart { flat_width: 0 });
+        self.ops
+            .push(FmtOp::GroupStart { flat_width: 0 });
         let saved_width = self.running_width;
         self.running_width = 0;
         self.group_stack.push((pos, saved_width));
@@ -217,7 +220,7 @@ impl<'a> FmtBuilder<'a> {
         let (start_pos, outer_width) = self.group_stack.pop().unwrap();
         let flat_width = self.running_width;
         if let FmtOp::GroupStart { flat_width: ref mut fw } = self.ops[start_pos] {
-            *fw = flat_width;
+            *fw = flat_width as u16;
         }
         self.running_width = outer_width + flat_width;
         self.ops.push(FmtOp::GroupEnd);
@@ -241,6 +244,56 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn indent_close(&mut self) {
         self.ops.push(FmtOp::IndentEnd);
+    }
+
+    /// Open a wrapped container: group + open delimiter + indent + break_line.
+    /// Closure `f` emits the container's items. Automatically patches `flat_width`.
+    pub fn wrap<F: FnOnce(&mut Self)>(&mut self, open: u8, close: u8, f: F) {
+        let pos = self.ops.len();
+        self.ops
+            .push(FmtOp::WrapStart { open, flat_width: 0 });
+        let saved_width = self.running_width;
+        self.running_width = 1; // the open char
+        f(self);
+        let flat_width = self.running_width + 1; // +1 for close char
+        if let FmtOp::WrapStart {
+            flat_width: ref mut fw,
+            ..
+        } = self.ops[pos]
+        {
+            *fw = flat_width as u16;
+        }
+        self.running_width = saved_width + flat_width;
+        self.ops.push(FmtOp::WrapEnd { close });
+    }
+
+    /// Emit the universal comma separator: `", "` in flat mode, `","` + newline in break mode.
+    /// Zero-payload fast path — use this for all standard list/struct separators.
+    #[inline]
+    pub fn comma_sep(&mut self) {
+        self.running_width += 2; // flat-mode width of ", "
+        self.ops.push(FmtOp::CommaSep);
+    }
+
+    /// Emit a custom separator: in break mode emit `brk` + newline + indent;
+    /// in flat mode emit `flat`. For non-comma separators.
+    ///
+    /// `flat` max 8 bytes, `brk` max 4 bytes.
+    #[inline]
+    pub fn sep(&mut self, flat: &str, brk: &str) {
+        debug_assert!(flat.len() <= 8, "sep flat must be ≤ 8 bytes");
+        debug_assert!(brk.len() <= 4, "sep brk must be ≤ 4 bytes");
+        let mut flat_buf = [0u8; 8];
+        flat_buf[..flat.len()].copy_from_slice(flat.as_bytes());
+        let mut brk_buf = [0u8; 4];
+        brk_buf[..brk.len()].copy_from_slice(brk.as_bytes());
+        self.running_width += flat.len() as u32; // flat-mode width
+        self.ops.push(FmtOp::Sep {
+            flat: flat_buf,
+            flat_len: flat.len() as u8,
+            brk: brk_buf,
+            brk_len: brk.len() as u8,
+        });
     }
 
     /// Emit an IfBreak: `break_fn` runs in break mode, `flat_fn` in flat mode.
@@ -280,8 +333,8 @@ impl<'a> FmtBuilder<'a> {
     // ── Join ops ─────────────────────────────────────────────────
 
     /// Join items with a separator, using the enclosing Group's break mode.
-    /// In flat mode: separator between items. In break mode: hardline between items.
-    pub fn join<I, F>(&mut self, items: I, sep: F)
+    /// In flat mode: `", "` between items. In break mode: `","` + newline between items.
+    pub fn join<I, F>(&mut self, items: I, emit: F)
     where
         I: IntoIterator,
         I::Item: 'a,
@@ -290,13 +343,10 @@ impl<'a> FmtBuilder<'a> {
         let mut first = true;
         for item in items {
             if !first {
-                self.if_break(
-                    |b| b.hardline(),
-                    |b| b.str(", "),
-                );
+                self.comma_sep();
             }
             first = false;
-            sep(self, item);
+            emit(self, item);
         }
     }
 
