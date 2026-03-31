@@ -31,7 +31,7 @@ cargo clippy --workspace -- -D warnings
 The formatting pipeline is a **flat-buffer instruction set** (FmtOp) with a linear O(n) renderer.
 
 ### Core modules
-- `rust/src/op.rs` — `FmtOp` enum: Text, Char, I64, U64, I128, U128, F64, GroupStart/End, IndentStart/End, Hardline, Softline, BreakLine, Mediumline, IfBreak
+- `rust/src/op.rs` — `FmtOp` enum (24 bytes, Copy): Text, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart/End, IndentStart/End, WrapStart/End, Hardline, Softline, BreakLine, Mediumline, CommaSep, Sep, IfBreak
 - `rust/src/builder.rs` — `FmtBuilder`: constructs `Vec<FmtOp>` with auto `GroupStart.flat_width` patching
 - `rust/src/render.rs` — Linear-scan renderer, `Printer` config struct, `render()`/`render_with_hint()`
 - `rust/src/pretty.rs` — `Pretty` trait, `pprint()` entry point, impls for all std types
@@ -71,16 +71,22 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - `pprint(&value, PRINTER)` — main entry point, builds ops then renders
 - `Printer` is `Copy` — `max_width: usize`, `indent: usize`, `use_tabs: bool`
 - `PRINTER` constant: 80 cols, 4 spaces, no tabs
-- `FmtOp` is `Copy`, ~24 bytes per variant — no Box allocations, no pointer chasing
-- `GroupStart.flat_width` pre-computed by `FmtBuilder` during construction — O(1) break decisions
-- Numeric FmtOp variants (I64, U64, I128, U128, F64) rendered inline by `render()` using itoap/dragonbox
+- `FmtOp` is `Copy`, 24 bytes per variant (8-byte align) — no Box allocations, no pointer chasing
+- `GroupStart.flat_width` (u16) pre-computed by `FmtBuilder` during construction — O(1) break decisions
+- `WrapStart`/`WrapEnd` — fused group+delimiter+indent+break_line (8 ops → 2 per container)
+- `CommaSep` — zero-payload fast path for the universal `", "` / `","` separator pattern
+- `Sep` — custom separator with inline flat/break byte arrays (max 8+4 bytes)
+- Numeric FmtOp variants (I64, U64, F64) rendered inline by `render()` using itoap/dragonbox
+- i128/u128 use wide-op encoding (I128Hi+I128Lo) — keeps FmtOp Copy, avoids 16-byte alignment inflation
 - `DigitCount` trait provides integer width for `FmtBuilder` flat_width tracking
 - F64 flat_width uses conservative upper bound (24 bytes)
+- Render group stack is a `u64` bitfield (64-level depth, zero allocation). Depths >64 conservatively break.
 - `SmartJoin` — greedy bin-packing via text_justify, cursor walk (no HashSet)
 - `LinearJoin` — inline greedy breaking during build
-- `Join` — delegates break decisions to enclosing Group/IfBreak
+- `Join` — delegates break decisions to enclosing Group/IfBreak, uses CommaSep
 - `Mediumline` — breaks when `current_line_len > max_width / 2`
-- Derive macro `#[derive(Pretty)]` generates `Pretty<'a>` impls with FmtBuilder calls
+- Indent emission uses pre-allocated cache (`extend_from_slice` instead of per-byte push)
+- Derive macro `#[derive(Pretty)]` generates `Pretty<'a>` impls using wrap/comma_sep/merged field labels
 - Derive attributes: `#[pprint(skip)]`, `#[pprint(indent)]`, `#[pprint(verbose)]`, `#[pprint(rename = "...")]`, `#[pprint(getter = "...")]`
 - Release builds use `String::from_utf8_unchecked` — all sources produce valid UTF-8
 

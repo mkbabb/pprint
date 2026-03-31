@@ -141,28 +141,35 @@ Throughput varies by workload — leaf-heavy documents (integers, strings) are c
 
 | Benchmark | pprint (ns) | Debug (ns) | vs Debug |
 |-----------|-------------|------------|----------|
-| flat_vec_1k (ints) | 13,262 | 21,394 | 1.61x faster |
-| flat_vec_10k (ints) | 118,090 | 220,181 | 1.86x faster |
-| nested_100x100 | 131,016 | 320,378 | 2.45x faster |
-| floats_1k | 24,060 | 66,015 | 2.74x faster |
-| strings_1k | 16,845 | 45,931 | 2.73x faster |
-| tuples_1k | 48,321 | 161,800 | 3.35x faster |
+| flat_vec_1k (ints) | 9,028 | 20,916 | 2.32x faster |
+| flat_vec_10k (ints) | 79,420 | 221,285 | 2.79x faster |
+| nested_100x100 | 75,908 | 327,368 | 4.31x faster |
+| floats_1k | 19,455 | 68,507 | 3.52x faster |
+| strings_1k | 13,754 | 44,407 | 3.23x faster |
+| tuples_1k | 29,967 | 161,258 | 5.38x faster |
 
-Compared to the previous tree-based Doc system, the FmtOp flat-buffer is **2–5x faster**
-across the board: 2x on structural workloads (vecs, nesting), 5.4x on strings and tuples.
-The old system was slower than `Debug` on strings and tuples; the new system beats `Debug`
-on every benchmark.
+Compared to the previous tree-based Doc system, the FmtOp flat-buffer is **3–9x faster**
+across the board. The old system was slower than `Debug` on strings and tuples; the new
+system beats `Debug` on every benchmark by 2–5x.
 
 ### Render Optimizations
 
-- **Flat-buffer instruction set.** `FmtOp` is a `Copy` enum (~32 bytes). The entire
+- **Flat-buffer instruction set.** `FmtOp` is a `Copy` enum (24 bytes). The entire
   formatting program is a `Vec<FmtOp>` — linear scan, no pointer chasing, cache-friendly.
+- **Fused container ops.** `WrapStart`/`WrapEnd` combine group + delimiter + indent + break
+  into a single op (replaces 8 ops per container with 2).
+- **Zero-payload `CommaSep`.** The universal `", "` / `","` separator is a dedicated
+  variant with no payload — hardcoded bytes, maximum branch-predictor friendliness.
 - **Pre-computed `flat_width`.** `FmtBuilder` tracks accumulated width during construction
   and patches `GroupStart.flat_width` at group close. The renderer makes O(1) break
   decisions without any tree traversal or caching.
+- **Bitfield group stack.** Break-mode state for nested groups is a `u64` bitfield —
+  zero allocation, O(1) push/pop, supports 64 nesting levels.
 - **Inline numeric rendering.** Integer and float FmtOp variants are formatted directly
   into the output buffer during rendering using itoap and Dragonbox — no intermediate
-  string allocation.
+  string allocation. i128/u128 use wide-op encoding (two ops) to keep `FmtOp` at 24 bytes.
+- **Indent cache.** Indentation emitted via `extend_from_slice` from a pre-allocated buffer
+  instead of per-byte push loops.
 - **`LinearJoin` variant.** Inline break decisions during render with no
   `text_justify` pre-pass. Best for code formatting where optimal prose
   justification is unnecessary.
