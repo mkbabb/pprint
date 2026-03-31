@@ -33,13 +33,13 @@ print!("{}", render(&b.finish(), PRINTER));
 The formatting pipeline is a **flat-buffer instruction set** (`FmtOp`) with a linear O(n) renderer.
 No tree structure, no Box allocations, no pointer chasing.
 
-`FmtOp` is a small, `Copy` enum (~32 bytes). The entire formatting program is a `Vec<FmtOp>` —
+`FmtOp` is a small, `Copy` enum (24 bytes). The entire formatting program is a `Vec<FmtOp>` —
 sequential ops are implicitly concatenated.
 
 ### FmtOp variants
 
-- **Text/Char** — emit borrowed text or a single ASCII byte
-- **Numeric** — I64, U64, I128, U128, F64 — rendered inline by the renderer using itoap/Dragonbox
+- **Text/QuotedText/Char** — emit borrowed text, quoted text (`"…"`), or a single ASCII byte
+- **Numeric** — I64, U64, I128, U128, F64 — rendered inline by the renderer using itoap/ryu
 - **GroupStart/GroupEnd** — break-mode decision regions, `flat_width` pre-computed during construction
 - **IndentStart/IndentEnd** — indentation regions
 - **Hardline/Softline/BreakLine/Mediumline** — line break variants with different break semantics
@@ -136,21 +136,22 @@ The FmtOp flat-buffer system achieves O(n) single-pass rendering with zero inter
 allocations beyond the output buffer. Break decisions are O(1) per Group — `flat_width`
 is pre-computed by the `FmtBuilder` during construction.
 
-Throughput varies by workload — leaf-heavy documents (integers, strings) are close to
-`Debug`, while `smart_join` adds bin-packing overhead for optimal line breaking.
+Throughput varies by workload. Compared against `std::fmt::Debug` (`{:#?}`) and the
+`pretty` crate (Wadler-Lindig doc algebra with Rc-based heap allocation):
 
-| Benchmark | pprint (ns) | Debug (ns) | vs Debug |
-|-----------|-------------|------------|----------|
-| flat_vec_1k (ints) | 9,028 | 20,916 | 2.32x faster |
-| flat_vec_10k (ints) | 79,420 | 221,285 | 2.79x faster |
-| nested_100x100 | 75,908 | 327,368 | 4.31x faster |
-| floats_1k | 19,455 | 68,507 | 3.52x faster |
-| strings_1k | 13,754 | 44,407 | 3.23x faster |
-| tuples_1k | 29,967 | 161,258 | 5.38x faster |
+| Benchmark | pprint (ns) | Debug (ns) | `pretty` crate (ns) | vs Debug | vs `pretty` |
+|-----------|-------------|------------|---------------------|----------|-------------|
+| flat_vec_1k (ints) | 8,082 | 20,279 | 107,720 | 2.5x faster | 13x faster |
+| flat_vec_10k (ints) | 72,096 | 208,350 | 1,030,221 | 2.9x faster | 14x faster |
+| nested_100x100 | 66,647 | 304,869 | 1,080,115 | 4.6x faster | 16x faster |
+| floats_1k | 21,900 | 65,717 | 153,718 | 3.0x faster | 7x faster |
+| strings_1k | 12,271 | 43,086 | 191,983 | 3.5x faster | 16x faster |
+| tuples_1k | 32,015 | 161,037 | 667,667 | 5.0x faster | 21x faster |
 
-Compared to the previous tree-based Doc system, the FmtOp flat-buffer is **3–9x faster**
-across the board. The old system was slower than `Debug` on strings and tuples; the new
-system beats `Debug` on every benchmark by 2–5x.
+These numbers should be taken with a grain of salt — microbenchmarks on a single machine,
+and the `pretty` crate comparison isn't entirely apples-to-apples since it builds Rc-based
+doc trees rather than flat buffers. The architectural gap is real, but your mileage will
+vary depending on workload and allocation pressure.
 
 ### Render Optimizations
 
@@ -158,6 +159,8 @@ system beats `Debug` on every benchmark by 2–5x.
   formatting program is a `Vec<FmtOp>` — linear scan, no pointer chasing, cache-friendly.
 - **Fused container ops.** `WrapStart`/`WrapEnd` combine group + delimiter + indent + break
   into a single op (replaces 8 ops per container with 2).
+- **Fused `QuotedText`.** String values emit `"text"` as a single op instead of three
+  (`Char` + `Text` + `Char`), eliminating two match dispatches per string.
 - **Zero-payload `CommaSep`.** The universal `", "` / `","` separator is a dedicated
   variant with no payload — hardcoded bytes, maximum branch-predictor friendliness.
 - **Pre-computed `flat_width`.** `FmtBuilder` tracks accumulated width during construction
@@ -166,7 +169,7 @@ system beats `Debug` on every benchmark by 2–5x.
 - **Bitfield group stack.** Break-mode state for nested groups is a `u64` bitfield —
   zero allocation, O(1) push/pop, supports 64 nesting levels.
 - **Inline numeric rendering.** Integer and float FmtOp variants are formatted directly
-  into the output buffer during rendering using itoap and Dragonbox — no intermediate
+  into the output buffer during rendering using itoap and ryu — no intermediate
   string allocation. i128/u128 use wide-op encoding (two ops) to keep `FmtOp` at 24 bytes.
 - **Indent cache.** Indentation emitted via `extend_from_slice` from a pre-allocated buffer
   instead of per-byte push loops.

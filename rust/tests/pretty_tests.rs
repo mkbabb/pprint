@@ -16,7 +16,7 @@ fn test_floats() {
     assert!(out.starts_with("3.14"), "got: {out}");
 
     let out = pprint(&0.0f64, PRINTER);
-    assert_eq!(out, "0E0");
+    assert_eq!(out, "0.0");
 
     let out = pprint(&-1.5f64, PRINTER);
     assert!(out.starts_with("-1.5"), "got: {out}");
@@ -31,10 +31,10 @@ fn test_bool() {
 #[test]
 fn test_str() {
     let s = "hello world";
-    assert_eq!(pprint(&s, PRINTER), "hello world");
+    assert_eq!(pprint(&s, PRINTER), "\"hello world\"");
 
     let s = String::from("owned");
-    assert_eq!(pprint(&s, PRINTER), "owned");
+    assert_eq!(pprint(&s, PRINTER), "\"owned\"");
 }
 
 #[test]

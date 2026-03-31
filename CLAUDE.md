@@ -31,7 +31,7 @@ cargo clippy --workspace -- -D warnings
 The formatting pipeline is a **flat-buffer instruction set** (FmtOp) with a linear O(n) renderer.
 
 ### Core modules
-- `rust/src/op.rs` — `FmtOp` enum (24 bytes, Copy): Text, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart/End, IndentStart/End, WrapStart/End, Hardline, Softline, BreakLine, Mediumline, CommaSep, Sep, IfBreak
+- `rust/src/op.rs` — `FmtOp` enum (24 bytes, Copy): Text, QuotedText, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart/End, IndentStart/End, WrapStart/End, Hardline, Softline, BreakLine, Mediumline, CommaSep, Sep, IfBreak
 - `rust/src/builder.rs` — `FmtBuilder`: constructs `Vec<FmtOp>` with auto `GroupStart.flat_width` patching
 - `rust/src/render.rs` — Linear-scan renderer, `Printer` config struct, `render()`/`render_with_hint()`
 - `rust/src/pretty.rs` — `Pretty` trait, `pprint()` entry point, impls for all std types
@@ -40,7 +40,7 @@ The formatting pipeline is a **flat-buffer instruction set** (FmtOp) with a line
 - `rust/derive/` — `#[derive(Pretty)]` proc macro generates `Pretty<'a>` impls
 
 ### Dependencies
-- `dragonbox = "0.1.8"` — fast f64→string (Dragonbox algorithm)
+- `ryu = "1.0"` — fast f64→string (shortest decimal representation)
 - `itoap = "1.0.1"` — fast integer→string
 - `regex` — optional, behind `features = ["regex"]`
 
@@ -74,9 +74,10 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - `FmtOp` is `Copy`, 24 bytes per variant (8-byte align) — no Box allocations, no pointer chasing
 - `GroupStart.flat_width` (u16) pre-computed by `FmtBuilder` during construction — O(1) break decisions
 - `WrapStart`/`WrapEnd` — fused group+delimiter+indent+break_line (8 ops → 2 per container)
+- `QuotedText` — fused `"` + text + `"` emission (3 ops → 1 per quoted string)
 - `CommaSep` — zero-payload fast path for the universal `", "` / `","` separator pattern
 - `Sep` — custom separator with inline flat/break byte arrays (max 8+4 bytes)
-- Numeric FmtOp variants (I64, U64, F64) rendered inline by `render()` using itoap/dragonbox
+- Numeric FmtOp variants (I64, U64, F64) rendered inline by `render()` using itoap/ryu
 - i128/u128 use wide-op encoding (I128Hi+I128Lo) — keeps FmtOp Copy, avoids 16-byte alignment inflation
 - `DigitCount` trait provides integer width for `FmtBuilder` flat_width tracking
 - F64 flat_width uses conservative upper bound (24 bytes)
@@ -90,17 +91,20 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - Derive attributes: `#[pprint(skip)]`, `#[pprint(indent)]`, `#[pprint(verbose)]`, `#[pprint(rename = "...")]`, `#[pprint(getter = "...")]`
 - Release builds use `String::from_utf8_unchecked` — all sources produce valid UTF-8
 
+- String Pretty impls emit quoted text (`"hello"`) via fused `QuotedText` op for unambiguous output
+
 ## Testing
 ```bash
-cd rust && cargo test    # 61 tests: 22 builder + 14 derive + 12 digit_count + 13 pretty
+cd rust && cargo test    # 65 tests: 26 builder + 14 derive + 12 digit_count + 13 pretty
 ```
 
 ## Benchmarks
 ```bash
-cd rust && cargo bench   # 28 benchmarks: 16 pprint + 12 digit_count
+cd rust && cargo bench   # 38 benchmarks: 26 pprint + 12 digit_count
 ```
 - pprint benches: flat_vec (1k/10k), nested, floats, strings, tuples, narrow_40, wide_120
 - Build-only and render-only microbenchmarks
 - Deep nesting (50-level) and many-groups (1k) stress tests
-- Each pprint bench has a `Debug` counterpart for direct comparison
+- SmartJoin benches: flat_1k, nested (vs default Join)
+- Each pprint bench has `Debug` and `pretty` crate (Wadler-Lindig) counterparts
 - digit_count benches: all integer types (i8–i128, u8–u128, isize, usize)

@@ -99,21 +99,21 @@ impl<'a> Pretty<'a> for bool {
 impl<'a> Pretty<'a> for &'a str {
     #[inline]
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
-        b.text(self);
+        b.quoted_text(self);
     }
 }
 
 impl<'a> Pretty<'a> for String {
     #[inline]
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
-        b.text(self.as_str());
+        b.quoted_text(self.as_str());
     }
 }
 
 impl<'a> Pretty<'a> for std::borrow::Cow<'a, str> {
     #[inline]
     fn pretty(&'a self, b: &mut FmtBuilder<'a>) {
-        b.text(self.as_ref());
+        b.quoted_text(self.as_ref());
     }
 }
 

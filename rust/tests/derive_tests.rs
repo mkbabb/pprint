@@ -72,7 +72,7 @@ fn test_struct_unnamed() {
     let s = TupleStruct(42, 3.14);
     let out = pprint(&s, PRINTER);
     assert!(out.contains("field_0: 42"), "got: {out}");
-    assert!(out.contains("field_1: 3.14"), "got: {out}");
+    assert!(out.contains("field_1: 3.14"), "got: {out}"); // ryu outputs 3.14 in decimal
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn test_struct_verbose() {
     };
     let out = pprint(&s, PRINTER);
     assert!(out.starts_with("VerboseStruct"), "got: {out}");
-    assert!(out.contains("name: hello"), "got: {out}");
+    assert!(out.contains("name: \"hello\""), "got: {out}");
     assert!(out.contains("count: 42"), "got: {out}");
 }
 

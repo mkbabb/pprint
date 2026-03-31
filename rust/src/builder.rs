@@ -90,6 +90,13 @@ impl<'a> FmtBuilder<'a> {
         self.ops.push(FmtOp::Char(c));
     }
 
+    /// Emit text wrapped in double quotes. Single op fast-path for string values.
+    #[inline]
+    pub fn quoted_text(&mut self, s: &'a str) {
+        self.running_width += s.len() as u32 + 2; // +2 for quotes
+        self.ops.push(FmtOp::QuotedText(s));
+    }
+
     /// Emit a string literal (for generated separators, keywords, etc.).
     /// Caller must ensure the string lives long enough (typically 'static).
     #[inline]
@@ -137,7 +144,7 @@ impl<'a> FmtBuilder<'a> {
     /// Uses a conservative upper-bound (24) for flat_width estimation.
     #[inline]
     pub fn f64(&mut self, v: f64) {
-        self.running_width += 24; // dragonbox max output length
+        self.running_width += 24; // ryu max output length
         self.ops.push(FmtOp::F64(v));
     }
 

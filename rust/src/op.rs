@@ -10,6 +10,10 @@ pub enum FmtOp<'a> {
     /// Emit borrowed source text. Zero-copy from the parsed input.
     Text(&'a str),
 
+    /// Emit borrowed text wrapped in double quotes. Fused fast-path for
+    /// `Char('"') + Text(s) + Char('"')` — single op, single match dispatch.
+    QuotedText(&'a str),
+
     /// Emit a single ASCII byte (delimiters, operators, commas).
     Char(u8),
 

@@ -79,6 +79,13 @@ pub fn render_with_hint(
                 state.current_line_len += s.len();
             }
 
+            FmtOp::QuotedText(s) => {
+                state.output.push(b'"');
+                state.output.extend_from_slice(s.as_bytes());
+                state.output.push(b'"');
+                state.current_line_len += s.len() + 2;
+            }
+
             FmtOp::Char(c) => {
                 state.output.push(c);
                 state.current_line_len += 1;
@@ -292,7 +299,7 @@ fn emit_int<T: itoap::Integer>(value: T, state: &mut RenderState) {
 
 #[inline(always)]
 fn emit_f64(value: f64, state: &mut RenderState) {
-    let mut buf = dragonbox::Buffer::new();
+    let mut buf = ryu::Buffer::new();
     let s = buf.format_finite(value).as_bytes();
     state.output.extend_from_slice(s);
     state.current_line_len += s.len();
@@ -326,6 +333,12 @@ fn render_single_op(op: &FmtOp<'_>, state: &mut RenderState, indent_cache: &mut 
         FmtOp::Text(s) => {
             state.output.extend_from_slice(s.as_bytes());
             state.current_line_len += s.len();
+        }
+        FmtOp::QuotedText(s) => {
+            state.output.push(b'"');
+            state.output.extend_from_slice(s.as_bytes());
+            state.output.push(b'"');
+            state.current_line_len += s.len() + 2;
         }
         FmtOp::Char(c) => {
             state.output.push(*c);
