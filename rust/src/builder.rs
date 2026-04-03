@@ -254,7 +254,7 @@ impl<'a> FmtBuilder<'a> {
         let (start_pos, outer_width) = self.group_stack.pop().unwrap();
         let flat_width = self.running_width;
         if let FmtOp::GroupStart { flat_width: ref mut fw } = self.ops[start_pos] {
-            *fw = flat_width as u16;
+            *fw = flat_width.min(u16::MAX as u32) as u16;
         }
         self.running_width = outer_width + flat_width;
         self.ops.push(FmtOp::GroupEnd);
@@ -295,7 +295,7 @@ impl<'a> FmtBuilder<'a> {
             ..
         } = self.ops[pos]
         {
-            *fw = flat_width as u16;
+            *fw = flat_width.min(u16::MAX as u32) as u16;
         }
         self.running_width = saved_width + flat_width;
         self.ops.push(FmtOp::WrapEnd { close });
