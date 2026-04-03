@@ -113,6 +113,17 @@ impl<'a> FmtBuilder<'a> {
         self.ops.push(FmtOp::QuotedText(s));
     }
 
+    /// Emit text only if it is non-empty and contains no newline bytes.
+    /// Used by prettify codegen for optional-whitespace (`?w`) boundaries
+    /// where structural whitespace is suppressed by `@pretty` hints.
+    #[inline]
+    pub fn text_inline_ws(&mut self, s: &'a str) {
+        if !s.is_empty() && !s.as_bytes().contains(&b'\n') {
+            self.running_width += s.len() as u32;
+            self.ops.push(FmtOp::Text(s));
+        }
+    }
+
     /// Emit a string literal (for generated separators, keywords, etc.).
     /// Caller must ensure the string lives long enough (typically 'static).
     #[inline]
