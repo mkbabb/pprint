@@ -65,6 +65,22 @@ impl<'a> FmtBuilder<'a> {
         self.running_width = width;
     }
 
+    /// Lightweight checkpoint — saves only ops length and running width.
+    /// Skips group_stack, so only safe when the checkpoint/restore span
+    /// does not cross `group_open`/`group_close` calls (e.g. prettify codegen
+    /// where structural wrapping happens at the rule level).
+    #[inline]
+    pub fn light_checkpoint(&self) -> (usize, u32) {
+        (self.ops.len(), self.running_width)
+    }
+
+    /// Restore to a lightweight checkpoint (truncate ops only, no group stack).
+    #[inline]
+    pub fn light_restore(&mut self, (ops_len, width): (usize, u32)) {
+        self.ops.truncate(ops_len);
+        self.running_width = width;
+    }
+
     /// Borrow the ops built so far (for inspection/testing).
     #[inline]
     pub fn ops(&self) -> &[FmtOp<'a>] {
