@@ -339,3 +339,65 @@ fn test_use_tabs() {
     );
     assert_eq!(out, "{\n\tx\n}");
 }
+
+// ── light_checkpoint / light_restore ───────────────────────────────────────
+
+#[test]
+fn test_light_checkpoint_restore() {
+    let mut b = FmtBuilder::new();
+    b.text("keep");
+    let cp = b.light_checkpoint();
+    b.text(" discard");
+    b.light_restore(cp);
+    b.text(" also_keep");
+    assert_eq!(r(&b.finish(), 80), "keep also_keep");
+}
+
+// ── text_inline_ws ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_text_inline_ws_spaces() {
+    let mut b = FmtBuilder::new();
+    b.text("a");
+    b.text_inline_ws("  ");
+    b.text("b");
+    assert_eq!(r(&b.finish(), 80), "a  b");
+}
+
+#[test]
+fn test_text_inline_ws_newline_suppressed() {
+    let mut b = FmtBuilder::new();
+    b.text("a");
+    b.text_inline_ws(" \n ");
+    b.text("b");
+    // Newline-containing whitespace is suppressed entirely.
+    assert_eq!(r(&b.finish(), 80), "ab");
+}
+
+#[test]
+fn test_text_inline_ws_empty() {
+    let mut b = FmtBuilder::new();
+    b.text("a");
+    b.text_inline_ws("");
+    b.text("b");
+    assert_eq!(r(&b.finish(), 80), "ab");
+}
+
+// ── flat_width u16 saturation ──────────────────────────────────────────────
+
+#[test]
+fn test_flat_width_saturation_forces_break() {
+    // Build a group whose flat content exceeds u16::MAX (65535).
+    // Without saturation the cast would truncate to 0, causing flat mode.
+    let long = "x".repeat(70_000);
+    let mut b = FmtBuilder::new();
+    b.group(|b| {
+        b.text(&long);
+        b.softline();
+        b.text("y");
+    });
+    let ops = b.finish();
+    // The group is far wider than any reasonable max_width, so it must break.
+    let out = render(&ops, Printer { max_width: 80, ..PRINTER });
+    assert!(out.contains('\n'), "expected break mode, got flat: len={}", out.len());
+}
