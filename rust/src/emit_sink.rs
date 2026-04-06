@@ -45,6 +45,16 @@ impl<'a> EmitSink<'a> for FmtBuilder<'a> {
     }
 
     #[inline]
+    fn i128(&mut self, v: i128) {
+        FmtBuilder::i128(self, v);
+    }
+
+    #[inline]
+    fn u128(&mut self, v: u128) {
+        FmtBuilder::u128(self, v);
+    }
+
+    #[inline]
     fn hardline(&mut self) {
         FmtBuilder::hardline(self);
     }
