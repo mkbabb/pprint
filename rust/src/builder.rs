@@ -113,6 +113,17 @@ impl<'a> FmtBuilder<'a> {
         self.ops.push(FmtOp::QuotedText(s));
     }
 
+    /// Emit computed/formatted text. The string is copied into an owned `FmtOp`.
+    /// Used for hex formatting, Display fallbacks, and other computed values.
+    #[inline]
+    pub fn text_owned(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        self.running_width += s.len() as u32;
+        self.ops.push(FmtOp::OwnedText(s.to_string()));
+    }
+
     /// Emit text only if it is non-empty and contains no newline bytes.
     /// Used by prettify codegen for optional-whitespace (`?w`) boundaries
     /// where structural whitespace is suppressed by `@pretty` hints.

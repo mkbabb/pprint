@@ -79,6 +79,11 @@ pub fn render_with_hint(
                 state.current_line_len += s.len();
             }
 
+            FmtOp::OwnedText(ref s) => {
+                state.output.extend_from_slice(s.as_bytes());
+                state.current_line_len += s.len();
+            }
+
             FmtOp::QuotedText(s) => {
                 state.output.push(b'"');
                 state.output.extend_from_slice(s.as_bytes());
@@ -331,6 +336,10 @@ fn emit_newline(state: &mut RenderState, indent_cache: &mut Vec<u8>) {
 fn render_single_op(op: &FmtOp<'_>, state: &mut RenderState, indent_cache: &mut Vec<u8>) {
     match op {
         FmtOp::Text(s) => {
+            state.output.extend_from_slice(s.as_bytes());
+            state.current_line_len += s.len();
+        }
+        FmtOp::OwnedText(s) => {
             state.output.extend_from_slice(s.as_bytes());
             state.current_line_len += s.len();
         }

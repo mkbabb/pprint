@@ -20,6 +20,6 @@ pub use dtoa::*;
 
 pub use pprint_derive::*;
 
-// ── EmitSink integration ───────────────────────────────────────────────────
-#[cfg(feature = "emit")]
-mod emit_sink;
+// ── Serializer integration ────────────────────────────────────────────────
+#[cfg(feature = "ser")]
+mod serializer;

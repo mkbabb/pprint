@@ -5,10 +5,14 @@
 /// Sequential ops are implicitly concatenated.
 ///
 /// Size: 24 bytes (8-byte alignment). The largest inline variant is `Text(&str)` at 16 bytes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum FmtOp<'a> {
     /// Emit borrowed source text. Zero-copy from the parsed input.
     Text(&'a str),
+
+    /// Emit computed/formatted text. Owned string for text_owned() path
+    /// (hex formatting, Display fallbacks). Rare — the 99% path is Text.
+    OwnedText(String),
 
     /// Emit borrowed text wrapped in double quotes. Fused fast-path for
     /// `Char('"') + Text(s) + Char('"')` — single op, single match dispatch.
