@@ -1,0 +1,29 @@
+# .cargo/config.toml — pprint sibling repo
+#
+# Minimal mirror of bbnf-lang's toolchain posture for cross-repo
+# path-patched builds. Source of truth for pin is bbnf-lang's
+# rust-toolchain.toml (mirrored here per B1.W2.c propagation).
+
+[build]
+rustflags = ["-Zthreads=8", "-Zshare-generics=y"]
+
+[target.aarch64-apple-darwin]
+rustflags = ["-Zthreads=8", "-Zshare-generics=y"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-fuse-ld=lld",
+    "-Zthreads=8",
+    "-Zshare-generics=y",
+]
+
+[profile.ax-iter]
+inherits      = "dev"
+opt-level     = 0
+debug         = "line-tables-only"
+incremental   = true
+codegen-units = 256
+
+[alias]
+iter-check = "check --profile ax-iter"
+iter-test  = "nextest run --cargo-profile ax-iter"
