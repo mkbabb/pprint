@@ -15,11 +15,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to nightly-2026-04-11 mirroring bbnf-lang's
+      # rust-toolchain.toml (B1.W2.c propagation). When pprint adopts
+      # its own rust-toolchain.toml the explicit pin moves there.
       - uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2026-04-11
           components: clippy
 
-      - run: cargo clippy --workspace -- -D warnings
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - run: cargo clippy --profile ax-iter --workspace --all-targets -- -D warnings
         working-directory: rust
-      - run: cargo test --workspace
+      - run: cargo nextest run --cargo-profile ax-iter --workspace --no-fail-fast
         working-directory: rust
