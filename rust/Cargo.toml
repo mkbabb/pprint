@@ -29,6 +29,17 @@ regex = { version = "1.11", optional = true }
 [dev-dependencies]
 rand = "0.8"
 pretty = "0.12"
+divan = "0.1"
+
+[[bench]]
+name = "pprint"
+path = "benches/pprint.rs"
+harness = false
+
+[[bench]]
+name = "digit_count"
+path = "benches/digit_count.rs"
+harness = false
 
 [profile.bench]
 # opt-level = 0

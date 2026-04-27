@@ -1,11 +1,12 @@
-#![feature(test)]
-
 extern crate pprint;
-extern crate test;
 
+use divan::{Bencher, black_box};
 use pprint::{FmtBuilder, PRINTER, Pretty, Printer, pprint, render};
 use pretty::RcDoc;
-use test::Bencher;
+
+fn main() {
+    divan::main();
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -35,81 +36,81 @@ fn create_mixed_tuples(n: usize) -> Vec<(usize, f64)> {
 
 // ── pprint benchmarks ────────────────────────────────────────────────────────
 
-#[bench]
-fn bench_pp_flat_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_flat_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_pp_flat_10k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_flat_10k(b: Bencher) {
     let data = create_flat_vec(10_000);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_pp_nested(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_nested(b: Bencher) {
     let data = create_nested_vec(100, 100);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_pp_floats(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_floats(b: Bencher) {
     let data = create_float_vec(1_000);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_pp_strings(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_strings(b: Bencher) {
     let data = create_string_vec(1_000);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_pp_tuples(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_tuples(b: Bencher) {
     let data = create_mixed_tuples(1_000);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_pp_narrow_40(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_narrow_40(b: Bencher) {
     let data = create_nested_vec(100, 100);
     let printer = Printer::new(40, 4, false);
-    b.iter(|| test::black_box(pprint(&data, printer)));
+    b.bench(|| black_box(pprint(&data, printer)));
 }
 
-#[bench]
-fn bench_pp_wide_120(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_wide_120(b: Bencher) {
     let data = create_nested_vec(100, 100);
     let printer = Printer::new(120, 4, false);
-    b.iter(|| test::black_box(pprint(&data, printer)));
+    b.bench(|| black_box(pprint(&data, printer)));
 }
 
 // ── Build-only vs render-only ────────────────────────────────────────────────
 
-#[bench]
-fn bench_build_only_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_build_only_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
-    b.iter(|| {
+    b.bench(|| {
         let mut builder = FmtBuilder::new();
         data.pretty(&mut builder);
-        test::black_box(builder.finish());
+        black_box(builder.finish());
     });
 }
 
-#[bench]
-fn bench_render_only_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_render_only_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
     let mut builder = FmtBuilder::new();
     data.pretty(&mut builder);
     let ops = builder.finish();
-    b.iter(|| test::black_box(render(&ops, PRINTER)));
+    b.bench(|| black_box(render(&ops, PRINTER)));
 }
 
 // ── Stress benchmarks ────────────────────────────────────────────────────────
 
-#[bench]
-fn bench_deep_nesting_50(b: &mut Bencher) {
+#[divan::bench]
+fn bench_deep_nesting_50(b: Bencher) {
     // 50-level deep nested vecs
     fn nest(depth: usize) -> Vec<Vec<usize>> {
         if depth == 0 {
@@ -119,22 +120,22 @@ fn bench_deep_nesting_50(b: &mut Bencher) {
         }
     }
     let data = nest(50);
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
-#[bench]
-fn bench_many_groups_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_many_groups_1k(b: Bencher) {
     // 1000 small tuples → 1000 groups
     let data: Vec<(usize, usize)> = (0..1000).map(|i| (i, i + 1)).collect();
-    b.iter(|| test::black_box(pprint(&data, PRINTER)));
+    b.bench(|| black_box(pprint(&data, PRINTER)));
 }
 
 // ── SmartJoin benchmarks ─────────────────────────────────────────────────────
 
-#[bench]
-fn bench_pp_smart_join_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_smart_join_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
-    b.iter(|| {
+    b.bench(|| {
         let mut builder = FmtBuilder::new();
         builder.wrap(b'[', b']', |b| {
             b.smart_join(data.iter(), ", ", 80, 1, |b, item| {
@@ -142,14 +143,14 @@ fn bench_pp_smart_join_1k(b: &mut Bencher) {
             });
         });
         let ops = builder.finish();
-        test::black_box(render(&ops, PRINTER))
+        black_box(render(&ops, PRINTER))
     });
 }
 
-#[bench]
-fn bench_pp_smart_join_nested(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pp_smart_join_nested(b: Bencher) {
     let data = create_nested_vec(100, 100);
-    b.iter(|| {
+    b.bench(|| {
         let mut builder = FmtBuilder::new();
         builder.wrap(b'[', b']', |b| {
             b.smart_join(data.iter(), ", ", 80, 1, |b, inner| {
@@ -161,7 +162,7 @@ fn bench_pp_smart_join_nested(b: &mut Bencher) {
             });
         });
         let ops = builder.finish();
-        test::black_box(render(&ops, PRINTER))
+        black_box(render(&ops, PRINTER))
     });
 }
 
@@ -258,76 +259,76 @@ fn pretty_crate_float_vec(items: &[f64], width: usize) -> String {
     String::from_utf8(w).unwrap()
 }
 
-#[bench]
-fn bench_pretty_flat_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pretty_flat_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
-    b.iter(|| test::black_box(pretty_crate_flat_vec(&data, 80)));
+    b.bench(|| black_box(pretty_crate_flat_vec(&data, 80)));
 }
 
-#[bench]
-fn bench_pretty_flat_10k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pretty_flat_10k(b: Bencher) {
     let data = create_flat_vec(10_000);
-    b.iter(|| test::black_box(pretty_crate_flat_vec(&data, 80)));
+    b.bench(|| black_box(pretty_crate_flat_vec(&data, 80)));
 }
 
-#[bench]
-fn bench_pretty_nested(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pretty_nested(b: Bencher) {
     let data = create_nested_vec(100, 100);
-    b.iter(|| test::black_box(pretty_crate_nested_vec(&data, 80)));
+    b.bench(|| black_box(pretty_crate_nested_vec(&data, 80)));
 }
 
-#[bench]
-fn bench_pretty_floats(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pretty_floats(b: Bencher) {
     let data = create_float_vec(1_000);
-    b.iter(|| test::black_box(pretty_crate_float_vec(&data, 80)));
+    b.bench(|| black_box(pretty_crate_float_vec(&data, 80)));
 }
 
-#[bench]
-fn bench_pretty_strings(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pretty_strings(b: Bencher) {
     let data = create_string_vec(1_000);
-    b.iter(|| test::black_box(pretty_crate_string_vec(&data, 80)));
+    b.bench(|| black_box(pretty_crate_string_vec(&data, 80)));
 }
 
-#[bench]
-fn bench_pretty_tuples(b: &mut Bencher) {
+#[divan::bench]
+fn bench_pretty_tuples(b: Bencher) {
     let data = create_mixed_tuples(1_000);
-    b.iter(|| test::black_box(pretty_crate_tuples(&data, 80)));
+    b.bench(|| black_box(pretty_crate_tuples(&data, 80)));
 }
 
 // ── Debug benchmarks — same data, format!("{:#?}") ───────────────────────────
 
-#[bench]
-fn bench_debug_flat_1k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_debug_flat_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
-    b.iter(|| test::black_box(format!("{:#?}", data)));
+    b.bench(|| black_box(format!("{:#?}", data)));
 }
 
-#[bench]
-fn bench_debug_flat_10k(b: &mut Bencher) {
+#[divan::bench]
+fn bench_debug_flat_10k(b: Bencher) {
     let data = create_flat_vec(10_000);
-    b.iter(|| test::black_box(format!("{:#?}", data)));
+    b.bench(|| black_box(format!("{:#?}", data)));
 }
 
-#[bench]
-fn bench_debug_nested(b: &mut Bencher) {
+#[divan::bench]
+fn bench_debug_nested(b: Bencher) {
     let data = create_nested_vec(100, 100);
-    b.iter(|| test::black_box(format!("{:#?}", data)));
+    b.bench(|| black_box(format!("{:#?}", data)));
 }
 
-#[bench]
-fn bench_debug_floats(b: &mut Bencher) {
+#[divan::bench]
+fn bench_debug_floats(b: Bencher) {
     let data = create_float_vec(1_000);
-    b.iter(|| test::black_box(format!("{:#?}", data)));
+    b.bench(|| black_box(format!("{:#?}", data)));
 }
 
-#[bench]
-fn bench_debug_strings(b: &mut Bencher) {
+#[divan::bench]
+fn bench_debug_strings(b: Bencher) {
     let data = create_string_vec(1_000);
-    b.iter(|| test::black_box(format!("{:#?}", data)));
+    b.bench(|| black_box(format!("{:#?}", data)));
 }
 
-#[bench]
-fn bench_debug_tuples(b: &mut Bencher) {
+#[divan::bench]
+fn bench_debug_tuples(b: Bencher) {
     let data = create_mixed_tuples(1_000);
-    b.iter(|| test::black_box(format!("{:#?}", data)));
+    b.bench(|| black_box(format!("{:#?}", data)));
 }
