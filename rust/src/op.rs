@@ -22,7 +22,6 @@ pub enum FmtOp<'a> {
     Char(u8),
 
     // ── Numeric ops (rendered inline by the renderer) ───────────────
-
     /// Signed 64-bit integer. Covers i8, i16, i32, isize via widening.
     I64(i64),
 
@@ -44,7 +43,6 @@ pub enum FmtOp<'a> {
     F64(f64),
 
     // ── Structural ops ──────────────────────────────────────────────
-
     /// Begin a group region. The renderer checks:
     ///   `current_line_len + flat_width > max_width` → set break mode for children.
     /// `flat_width` is pre-computed during construction by the `FmtBuilder`.
@@ -94,8 +92,5 @@ pub enum FmtOp<'a> {
 
     /// In break mode: emit next `break_count` ops, then skip `flat_count`.
     /// In flat mode: skip `break_count` ops, then emit `flat_count`.
-    IfBreak {
-        break_count: u16,
-        flat_count: u16,
-    },
+    IfBreak { break_count: u16, flat_count: u16 },
 }

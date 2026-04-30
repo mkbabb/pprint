@@ -41,11 +41,7 @@ pub fn render(ops: &[FmtOp<'_>], printer: Printer) -> String {
 }
 
 /// Like `render`, but with a size hint for the output buffer.
-pub fn render_with_hint(
-    ops: &[FmtOp<'_>],
-    printer: Printer,
-    size_hint: usize,
-) -> String {
+pub fn render_with_hint(ops: &[FmtOp<'_>], printer: Printer, size_hint: usize) -> String {
     let indent_ch = if printer.use_tabs { b'\t' } else { b' ' };
     let mut indent_cache: Vec<u8> = vec![indent_ch; 128.min(printer.max_width)];
 
@@ -203,15 +199,11 @@ pub fn render_with_hint(
                 brk_len,
             } => {
                 if state.in_break_mode() {
-                    state
-                        .output
-                        .extend_from_slice(&brk[..brk_len as usize]);
+                    state.output.extend_from_slice(&brk[..brk_len as usize]);
                     state.current_line_len += brk_len as usize;
                     emit_newline(&mut state, &mut indent_cache);
                 } else {
-                    state
-                        .output
-                        .extend_from_slice(&flat[..flat_len as usize]);
+                    state.output.extend_from_slice(&flat[..flat_len as usize]);
                     state.current_line_len += flat_len as usize;
                 }
             }
@@ -392,15 +384,11 @@ fn render_single_op(op: &FmtOp<'_>, state: &mut RenderState, indent_cache: &mut 
             brk_len,
         } => {
             if state.in_break_mode() {
-                state
-                    .output
-                    .extend_from_slice(&brk[..*brk_len as usize]);
+                state.output.extend_from_slice(&brk[..*brk_len as usize]);
                 state.current_line_len += *brk_len as usize;
                 emit_newline(state, indent_cache);
             } else {
-                state
-                    .output
-                    .extend_from_slice(&flat[..*flat_len as usize]);
+                state.output.extend_from_slice(&flat[..*flat_len as usize]);
                 state.current_line_len += *flat_len as usize;
             }
         }

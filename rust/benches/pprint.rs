@@ -208,7 +208,11 @@ fn pretty_crate_nested_vec(items: &[Vec<usize>], width: usize) -> String {
 fn pretty_crate_string_vec(items: &[String], width: usize) -> String {
     let docs: Vec<RcDoc<()>> = items
         .iter()
-        .map(|s| RcDoc::text("\"").append(RcDoc::text(s.as_str())).append(RcDoc::text("\"")))
+        .map(|s| {
+            RcDoc::text("\"")
+                .append(RcDoc::text(s.as_str()))
+                .append(RcDoc::text("\""))
+        })
         .collect();
     let sep = RcDoc::text(",").append(RcDoc::line());
     let body = RcDoc::intersperse(docs, sep);

@@ -135,32 +135,31 @@ pub fn pprint_derive(input: TokenStream) -> TokenStream {
 // ── Struct codegen ──────────────────────────────────────────────────────────
 
 fn generate_field_emissions(fields: &Fields) -> Vec<proc_macro2::TokenStream> {
-    let emit_field =
-        |field_name: String, field_access: proc_macro2::TokenStream, field: &Field| {
-            let pretty_attrs = parse_pretty_attrs(&field.attrs);
-            if pretty_attrs.skip {
-                return None;
-            }
-            let display_name = pretty_attrs.rename.clone().unwrap_or(field_name);
+    let emit_field = |field_name: String, field_access: proc_macro2::TokenStream, field: &Field| {
+        let pretty_attrs = parse_pretty_attrs(&field.attrs);
+        if pretty_attrs.skip {
+            return None;
+        }
+        let display_name = pretty_attrs.rename.clone().unwrap_or(field_name);
 
-            let mut emit = quote! {
-                pprint::Pretty::pretty(&#field_access, __b);
-            };
-
-            if pretty_attrs.indent {
-                emit = quote! {
-                    __b.indent(|__b| {
-                        #emit
-                    });
-                };
-            }
-
-            let label = format!("{display_name}: ");
-            Some(quote! {
-                __b.str(#label);
-                #emit
-            })
+        let mut emit = quote! {
+            pprint::Pretty::pretty(&#field_access, __b);
         };
+
+        if pretty_attrs.indent {
+            emit = quote! {
+                __b.indent(|__b| {
+                    #emit
+                });
+            };
+        }
+
+        let label = format!("{display_name}: ");
+        Some(quote! {
+            __b.str(#label);
+            #emit
+        })
+    };
 
     match fields {
         Fields::Named(fields) => fields
@@ -274,7 +273,13 @@ fn generate_variant_arm(
     match &variant.fields {
         Fields::Named(fields) => {
             let bindings: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
-            let body = generate_variant_body(&variant_name, &variant.fields, &bindings, &pretty_attrs, pretty_attributes);
+            let body = generate_variant_body(
+                &variant_name,
+                &variant.fields,
+                &bindings,
+                &pretty_attrs,
+                pretty_attributes,
+            );
             Some(quote! { #constructor { #(#bindings),* } => { #body } })
         }
         Fields::Unnamed(fields) => {
@@ -284,7 +289,13 @@ fn generate_variant_arm(
                 .enumerate()
                 .map(|(i, _)| format_ident!("field_{}", i))
                 .collect();
-            let body = generate_variant_body(&variant_name, &variant.fields, &bindings, &pretty_attrs, pretty_attributes);
+            let body = generate_variant_body(
+                &variant_name,
+                &variant.fields,
+                &bindings,
+                &pretty_attrs,
+                pretty_attributes,
+            );
             Some(quote! { #constructor(#(#bindings),*) => { #body } })
         }
         Fields::Unit => {

@@ -252,8 +252,7 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn group_open(&mut self) {
         let pos = self.ops.len();
-        self.ops
-            .push(FmtOp::GroupStart { flat_width: 0 });
+        self.ops.push(FmtOp::GroupStart { flat_width: 0 });
         let saved_width = self.running_width;
         self.running_width = 0;
         self.group_stack.push((pos, saved_width));
@@ -264,7 +263,10 @@ impl<'a> FmtBuilder<'a> {
     pub fn group_close(&mut self) {
         let (start_pos, outer_width) = self.group_stack.pop().unwrap();
         let flat_width = self.running_width;
-        if let FmtOp::GroupStart { flat_width: ref mut fw } = self.ops[start_pos] {
+        if let FmtOp::GroupStart {
+            flat_width: ref mut fw,
+        } = self.ops[start_pos]
+        {
             *fw = flat_width.min(u16::MAX as u32) as u16;
         }
         self.running_width = outer_width + flat_width;
@@ -295,8 +297,10 @@ impl<'a> FmtBuilder<'a> {
     /// Closure `f` emits the container's items. Automatically patches `flat_width`.
     pub fn wrap<F: FnOnce(&mut Self)>(&mut self, open: u8, close: u8, f: F) {
         let pos = self.ops.len();
-        self.ops
-            .push(FmtOp::WrapStart { open, flat_width: 0 });
+        self.ops.push(FmtOp::WrapStart {
+            open,
+            flat_width: 0,
+        });
         let saved_width = self.running_width;
         self.running_width = 1; // the open char
         f(self);
@@ -350,8 +354,10 @@ impl<'a> FmtBuilder<'a> {
         flat_fn: F2,
     ) {
         let if_pos = self.ops.len();
-        self.ops
-            .push(FmtOp::IfBreak { break_count: 0, flat_count: 0 }); // placeholder
+        self.ops.push(FmtOp::IfBreak {
+            break_count: 0,
+            flat_count: 0,
+        }); // placeholder
 
         // Break side: save+restore running_width so it doesn't affect flat_width.
         let saved_width = self.running_width;
@@ -431,7 +437,13 @@ impl<'a> FmtBuilder<'a> {
         // Compute optimal break positions.
         let sep_width = flat_sep.len();
         let mut breaks = Vec::new();
-        text_justify(sep_width, &item_widths, max_width, first_line_offset, &mut breaks);
+        text_justify(
+            sep_width,
+            &item_widths,
+            max_width,
+            first_line_offset,
+            &mut breaks,
+        );
 
         // Interleave separators. Drain item ops and rebuild with separators.
         let all_item_ops: Vec<FmtOp<'a>> = self.ops.drain(items_start..).collect();
@@ -448,7 +460,8 @@ impl<'a> FmtBuilder<'a> {
                 all_item_ops.len()
             };
             // Emit item ops.
-            self.ops.extend_from_slice(&all_item_ops[item_range_start..item_range_end]);
+            self.ops
+                .extend_from_slice(&all_item_ops[item_range_start..item_range_end]);
             // Emit separator (if not last item).
             if i + 1 < n {
                 if break_cursor < breaks.len() && breaks[break_cursor] == i + 1 {

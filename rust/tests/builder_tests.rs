@@ -1,7 +1,13 @@
 use pprint::{FmtBuilder, FmtOp, PRINTER, Printer, render};
 
 fn r(ops: &[FmtOp<'_>], max_width: usize) -> String {
-    render(ops, Printer { max_width, ..PRINTER })
+    render(
+        ops,
+        Printer {
+            max_width,
+            ..PRINTER
+        },
+    )
 }
 
 // ── Basic ops ───────────────────────────────────────────────────────────────
@@ -398,6 +404,16 @@ fn test_flat_width_saturation_forces_break() {
     });
     let ops = b.finish();
     // The group is far wider than any reasonable max_width, so it must break.
-    let out = render(&ops, Printer { max_width: 80, ..PRINTER });
-    assert!(out.contains('\n'), "expected break mode, got flat: len={}", out.len());
+    let out = render(
+        &ops,
+        Printer {
+            max_width: 80,
+            ..PRINTER
+        },
+    );
+    assert!(
+        out.contains('\n'),
+        "expected break mode, got flat: len={}",
+        out.len()
+    );
 }

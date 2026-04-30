@@ -8,8 +8,8 @@
 //! Zero-copy: `text()` stores borrowed `&'a str` directly in `FmtOp::Text`.
 //! Computed values: `text_owned()` copies into `FmtOp::OwnedText(String)`.
 
-use bbnf_ser::Serializer;
 use crate::builder::FmtBuilder;
+use bbnf_ser::Serializer;
 
 impl<'a> Serializer<'a> for FmtBuilder<'a> {
     type Checkpoint = (usize, usize, u32);

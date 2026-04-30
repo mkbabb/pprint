@@ -1,10 +1,10 @@
 // ── FmtOp flat buffer system ────────────────────────────────────────────────
-pub mod op;
 pub mod builder;
+pub mod op;
 pub mod render;
 
-pub use op::FmtOp;
 pub use builder::FmtBuilder;
+pub use op::FmtOp;
 pub use render::{PRINTER, Printer, render, render_with_hint};
 
 // ── Pretty trait + standard type impls ──────────────────────────────────────

@@ -104,14 +104,13 @@ fn test_struct_rename() {
 
 #[test]
 fn test_struct_skip() {
-    let s = SkipStruct {
-        a: 1,
-        _b: 99,
-        c: 3,
-    };
+    let s = SkipStruct { a: 1, _b: 99, c: 3 };
     let out = pprint(&s, PRINTER);
     assert!(out.contains("a: 1"), "got: {out}");
-    assert!(!out.contains("99"), "skipped field should not appear: {out}");
+    assert!(
+        !out.contains("99"),
+        "skipped field should not appear: {out}"
+    );
     assert!(out.contains("c: 3"), "got: {out}");
 }
 
