@@ -26,6 +26,7 @@ checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 [[package]]
 name = "bbnf-ser"
 version = "0.1.0"
+source = "git+https://github.com/mkbabb/bbnf-lang?rev=c9b93adb4e4c2ec793af881f390f997cd4e11696#c9b93adb4e4c2ec793af881f390f997cd4e11696"
 dependencies = [
  "itoa",
  "ryu",

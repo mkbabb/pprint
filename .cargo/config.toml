@@ -27,3 +27,12 @@ codegen-units = 256
 [alias]
 iter-check = "check --profile ax-iter"
 iter-test  = "nextest run --cargo-profile ax-iter"
+
+# ── Patches (CB-1a, sk-v27 LW1.COMP-4 extended to this repo at the LW1 lockstep gate) ──
+# The optional `ser` feature depends on bbnf-ser, which lives in bbnf-lang and
+# is not on crates.io until the pprint-ser move (PP-07) and the LW6 publish.
+# It enters as a git + rev edge pinned to bbnf-lang origin/master, so a clean
+# clone resolves with no sibling checkout and no path that leaves the
+# repository (this replaces the untracked rust/.cargo/config.toml path patch).
+[patch.crates-io]
+bbnf-ser = { git = "https://github.com/mkbabb/bbnf-lang", rev = "c9b93adb4e4c2ec793af881f390f997cd4e11696" }
