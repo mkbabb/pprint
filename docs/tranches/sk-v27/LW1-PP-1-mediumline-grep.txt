@@ -1,0 +1,41 @@
+# sk-v27 LW1.PP-1 — Mediumline re-grep (git grep -i -E 'mediumline|medium_line' at pinned revs; run 2 byte-identical)
+# code users outside pprint = 0 (bbnf-lang hits are docs/pprint/doc-api.md only, all three lineages); typescript/ = 0; parse-that = 0; value.js = 0
+# dirty working trees (bbnf-lang local, bbnf-lang-skv26, parse-that, parse-that-skv26, keyframes.js, fourier-analysis) also grepped: same 2 doc hits, 0 code
+# verdict: no escalation; Mediumline deletion proceeds at LW2.PP-2 together with its doc lines
+== bbnf-lang@origin/master c9b93adb4 hits=2
+c9b93adb4:docs/pprint/doc-api.md:79:### Hardline, Softline, Mediumline, Line
+c9b93adb4:docs/pprint/doc-api.md:84:Doc::Mediumline // Breaks when current_line_len > max_width / 2
+== bbnf-lang@local-master af15f63e0 hits=2
+af15f63e0:docs/pprint/doc-api.md:79:### Hardline, Softline, Mediumline, Line
+af15f63e0:docs/pprint/doc-api.md:84:Doc::Mediumline // Breaks when current_line_len > max_width / 2
+== bbnf-lang@codex/sk-v26-bbnf b5fd0ca98 hits=2
+b5fd0ca98:docs/pprint/doc-api.md:79:### Hardline, Softline, Mediumline, Line
+b5fd0ca98:docs/pprint/doc-api.md:84:Doc::Mediumline // Breaks when current_line_len > max_width / 2
+== parse-that@origin/master 47e928acc hits=0
+== parse-that@codex/sk-v26-parse-that e31fbfedc hits=0
+== pprint@2b4d2d4 2b4d2d486 hits=14
+2b4d2d486:CLAUDE.md:34:- `rust/src/op.rs` — `FmtOp` enum (24 bytes, Copy): Text, QuotedText, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart/End, IndentStart/End, WrapStart/End, Hardline, Softline, BreakLine, Mediumline, CommaSep, Sep, IfBreak
+2b4d2d486:CLAUDE.md:88:- `Mediumline` — breaks when `current_line_len > max_width / 2`
+2b4d2d486:README.md:45:- **Hardline/Softline/BreakLine/Mediumline** — line break variants with different break semantics
+2b4d2d486:docs/playground/doc-api.md:79:### Hardline, Softline, Mediumline, Line
+2b4d2d486:docs/playground/doc-api.md:84:Doc::Mediumline // Breaks when current_line_len > max_width / 2
+2b4d2d486:rust/src/builder.rs:234:    pub fn mediumline(&mut self) {
+2b4d2d486:rust/src/builder.rs:235:        self.ops.push(FmtOp::Mediumline);
+2b4d2d486:rust/src/op.rs:78:    Mediumline,
+2b4d2d486:rust/src/render.rs:178:            FmtOp::Mediumline => {
+2b4d2d486:rust/src/render.rs:365:        FmtOp::Mediumline => {
+2b4d2d486:rust/tests/builder_tests.rs:190:// ── Mediumline ──────────────────────────────────────────────────────────────
+2b4d2d486:rust/tests/builder_tests.rs:193:fn test_mediumline() {
+2b4d2d486:rust/tests/builder_tests.rs:196:    b.mediumline();
+2b4d2d486:rust/tests/builder_tests.rs:202:    b.mediumline();
+== value.js@HEAD 0ac575515 hits=0
+== worktree /Users/mkbabb/Programming/bbnf-lang hits=2
+/Users/mkbabb/Programming/bbnf-lang/docs/pprint/doc-api.md:79:### Hardline, Softline, Mediumline, Line
+/Users/mkbabb/Programming/bbnf-lang/docs/pprint/doc-api.md:84:Doc::Mediumline // Breaks when current_line_len > max_width / 2
+== worktree /Users/mkbabb/Programming/bbnf-lang-skv26 hits=2
+/Users/mkbabb/Programming/bbnf-lang-skv26/docs/pprint/doc-api.md:79:### Hardline, Softline, Mediumline, Line
+/Users/mkbabb/Programming/bbnf-lang-skv26/docs/pprint/doc-api.md:84:Doc::Mediumline // Breaks when current_line_len > max_width / 2
+== worktree /Users/mkbabb/Programming/parse-that hits=0
+== worktree /Users/mkbabb/Programming/parse-that-skv26 hits=0
+== worktree /Users/mkbabb/Programming/keyframes.js hits=0
+== worktree /Users/mkbabb/Programming/fourier-analysis hits=0

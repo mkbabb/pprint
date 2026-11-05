@@ -24,7 +24,9 @@ pub fn text_justify(
         let mut line_length = doc_lengths[i];
         let mut j = i + 1;
         while j < n {
-            let next = line_length.saturating_add(sep_length).saturating_add(doc_lengths[j]);
+            let next = line_length
+                .saturating_add(sep_length)
+                .saturating_add(doc_lengths[j]);
             if next > effective_width {
                 break;
             }
