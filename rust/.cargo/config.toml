@@ -1,0 +1,3 @@
+# Local development overrides
+[patch.crates-io]
+bbnf-ser = { path = "../../bbnf-lang/crates/ser" }
