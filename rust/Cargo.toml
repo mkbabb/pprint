@@ -17,13 +17,11 @@ path = "src/lib.rs"
 [features]
 default = []
 regex = ["dep:regex"]
-ser = ["dep:bbnf-ser"]
 
 [dependencies]
 ryu = "1.0"
 itoap = "1.0.1"
 pprint_derive = { path = "./derive", version = "0.2.2" }
-bbnf-ser = { version = "0.1", optional = true }
 regex = { version = "1.11", optional = true }
 
 [dev-dependencies]

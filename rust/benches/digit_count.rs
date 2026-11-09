@@ -5,7 +5,7 @@ use std::fmt::Display;
 
 fn bench_range<T>(b: Bencher, start: T, end: T, n_samples: usize)
 where
-    T: DigitCount + Display + PartialOrd + Copy + SampleUniform,
+    T: DigitCount + Display + PartialOrd + Copy + SampleUniform + Sync,
     rand::distributions::Standard: rand::distributions::Distribution<T>,
 {
     let mut rng = rand::thread_rng();

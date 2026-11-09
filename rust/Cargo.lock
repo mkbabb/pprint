@@ -24,15 +24,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b62fc65de8e4e7f52534fb52b0f3ed04746ae267519eef2a83941e8085068b"
 
 [[package]]
-name = "bbnf-ser"
-version = "0.1.0"
-source = "git+https://github.com/mkbabb/bbnf-lang?rev=1874fa3f8db8d007ae82fb2582636b30b02546e2#1874fa3f8db8d007ae82fb2582636b30b02546e2"
-dependencies = [
- "itoa",
- "ryu",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -123,12 +114,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "itoa"
-version = "1.0.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
-
-[[package]]
 name = "itoap"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -156,7 +141,6 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 name = "pprint"
 version = "0.3.6"
 dependencies = [
- "bbnf-ser",
  "divan",
  "itoap",
  "pprint_derive",

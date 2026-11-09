@@ -19,7 +19,3 @@ pub mod dtoa;
 pub use dtoa::*;
 
 pub use pprint_derive::*;
-
-// ── Serializer integration ────────────────────────────────────────────────
-#[cfg(feature = "ser")]
-mod serializer;
