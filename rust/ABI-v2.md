@@ -1,6 +1,6 @@
 # pprint op stream, ABI v2 (sk-v27 LW2.PP-1)
 
-The layout record that S15 freezes. The source of truth is `src/op.rs`. The const asserts listed below make any change to these numbers a compile error.
+The layout record that S15 freezes. ABI v2 breaks the 0.3 public API (`finish() -> Result<Doc, BuildError>`, `render(&Doc, …)`, `mediumline` removed), so it is the 0.4 version line: the crate is `0.4.0-alpha.0` from this ABI on, and a consumer edge onto it says `version = "0.4.0-alpha.0"` (S14 ruling on S13-G2). The source of truth is `src/op.rs`. The const asserts listed below make any change to these numbers a compile error.
 
 ## `FmtOp<'a>`: 24 bytes, alignment 8
 
