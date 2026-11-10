@@ -1,23 +1,20 @@
 # .cargo/config.toml — pprint sibling repo
 #
-# Minimal mirror of the downstream workspaces' toolchain posture. Source
-# of truth for the pin is bbnf-lang's rust-toolchain.toml (mirrored here
-# per B1.W2.c propagation). No [patch] table: pprint is the leaf of the
+# Minimal mirror of the downstream workspaces' toolchain posture: the same
+# stable pin as bbnf-lang's rust-toolchain.toml. No [patch] table: pprint is the leaf of the
 # pprint -> parse-that -> bbnf-lang graph and takes no edge into either
 # (sk-v27 LW2.TOPO-1).
 
-[build]
-rustflags = ["-Zthreads=8", "-Zshare-generics=y"]
+# ── Toolchain plane (sk-v27 LW2.TOPO-2) ─────────────────────────────────────
+# Stable is the default plane: rust-toolchain.toml pins stable 1.99.1, and
+# nothing in this file needs nightly. No build wrapper is committed. CI sets
+# RUSTC_WRAPPER=sccache through mozilla-actions/sccache-action; a developer
+# who wants the cache exports RUSTC_WRAPPER=sccache in the shell profile, or
+# sets the same wrapper under [build] in ~/.cargo/config.toml.
 
-[target.aarch64-apple-darwin]
-rustflags = ["-Zthreads=8", "-Zshare-generics=y"]
-
+# Linux x86_64: bundled rust-lld, no extra install.
 [target.x86_64-unknown-linux-gnu]
-rustflags = [
-    "-C", "link-arg=-fuse-ld=lld",
-    "-Zthreads=8",
-    "-Zshare-generics=y",
-]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [profile.ax-iter]
 inherits      = "dev"
@@ -29,3 +26,10 @@ codegen-units = 256
 [alias]
 iter-check = "check --profile ax-iter"
 iter-test  = "nextest run --cargo-profile ax-iter"
+
+# ── nightly alias family: BEGIN ─────────────────────────────────────────────
+# Opt-in nightly work, run as `cargo +nightly <alias>`; a stable build never
+# reads these.
+nightly-check           = ["check", "--profile", "ax-iter", "--workspace", "--config", "build.rustflags=['-Zthreads=8','-Zshare-generics=y']"]
+nightly-check-cranelift = ["check", "-Zcodegen-backend", "--profile", "ax-iter", "--workspace", "--config", "profile.ax-iter.codegen-backend='cranelift'"]
+# ── nightly alias family: END ───────────────────────────────────────────────
