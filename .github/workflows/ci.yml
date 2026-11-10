@@ -34,3 +34,22 @@ jobs:
         working-directory: rust
       - run: cargo nextest run --cargo-profile ax-iter --workspace --no-fail-fast
         working-directory: rust
+
+  hermetic:
+    # sk-v27 LW2.TOPO-1: a fresh checkout, with no sibling repositories and no
+    # credentials, resolves and builds the crate from its pinned edges, and
+    # the three-repository crate graph is a DAG (ruling X-5): pprint is the
+    # leaf and takes no edge into parse-that or bbnf-lang.
+    name: Rust — repo DAG + hermetic clean-clone build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-04-11
+      - name: repo DAG (pprint <- parse-that <- bbnf-lang)
+        run: sh scripts/check-repo-dag.sh
+      - name: hermetic build
+        run: sh scripts/check-hermetic-build.sh
