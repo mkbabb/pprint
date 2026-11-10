@@ -324,6 +324,26 @@ fn l3_rest_lookahead() {
     eprintln!("L3': {cells} cells, 0 divergences");
 }
 
+/// L3′ as [W] §4 reads it, pinned where the design's L3′ text ("lines in
+/// later groups without `HAS_HARD` count at flat width") would differ.
+/// G = group(aa line bb), then "c", then H = group(d line e), at w = 7.
+/// [W]: `fits` reads H through `better`; H's flat side does not fit at
+/// column 6, so `be` takes H's broken side and the first line ends after "d":
+/// 5 + 1 + 1 = 7 <= 7, and G is flat. Counting H at its flat width would give
+/// 5 + 1 + 3 = 9 > 7 and break G ("aa\nbbcd e").
+#[test]
+fn l3_later_group_counts_to_its_first_line_not_its_flat_width() {
+    let gs = vec![
+        G::Group(vec![G::Text("aa"), G::Softline, G::Text("bb")]),
+        G::Text("c"),
+        G::Group(vec![G::Text("d"), G::Softline, G::Text("e")]),
+    ];
+    let doc = build(&gs);
+    assert_eq!(oracle_render(doc.ops(), p(7)).unwrap(), "aa bbcd\ne");
+    assert_eq!(render(&doc, p(7)), "aa bbcd\ne");
+    assert_eq!(render(&doc, p(6)), "aa\nbbcd e");
+}
+
 // ── L4 ──────────────────────────────────────────────────────────────────────
 
 /// L4, nest. [W] §3 `nest i x = NEST i x`; [W] §4 `be w k ((i,NEST j x):z)
