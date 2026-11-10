@@ -1,4 +1,4 @@
-use crate::op::FmtOp;
+use crate::op::{Doc, FmtOp, GroupHdr};
 
 /// Printer configuration.
 #[derive(Debug, Clone, Copy)]
@@ -31,29 +31,33 @@ impl Printer {
     }
 }
 
-/// Linear-scan renderer. Single pass over the op buffer, O(n) time,
-/// zero allocations beyond the output buffer.
+/// Linear-scan renderer. One forward pass over the op stream, O(n) time,
+/// no allocation beyond the output buffer and the indent run.
 ///
-/// Break decisions are O(1) per Group — `flat_width` is pre-computed
-/// by the `FmtBuilder` during construction.
-pub fn render(ops: &[FmtOp<'_>], printer: Printer) -> String {
-    render_with_hint(ops, printer, 0)
+/// A group decision is O(1): flat if and only if the group is not
+/// `HAS_HARD` and `column + flat_width + trailing <= max_width`, with both
+/// widths precomputed by `FmtBuilder::finish()` ([W] §4 `better`/`fits` with
+/// the rest lookahead; laws L1–L3′). Inside a flat group every nested group
+/// is flat ([W] §3 `flatten (x :<|> y) = flatten x`).
+pub fn render(doc: &Doc<'_>, printer: Printer) -> String {
+    render_with_hint(doc, printer, 0)
 }
 
 /// Like `render`, but with a size hint for the output buffer.
-pub fn render_with_hint(ops: &[FmtOp<'_>], printer: Printer, size_hint: usize) -> String {
+pub fn render_with_hint(doc: &Doc<'_>, printer: Printer, size_hint: usize) -> String {
     let indent_ch = if printer.use_tabs { b'\t' } else { b' ' };
-    let mut indent_cache: Vec<u8> = vec![indent_ch; 128.min(printer.max_width)];
 
     // Pre-size output buffer from root op's flat_width or size hint.
     let capacity = if size_hint > 0 {
         size_hint
     } else {
-        match ops.first() {
-            Some(FmtOp::WrapStart { flat_width, .. } | FmtOp::GroupStart { flat_width }) => {
-                (*flat_width as usize).saturating_mul(2).max(256)
+        match doc.ops.first() {
+            Some(FmtOp::WrapStart { hdr, .. } | FmtOp::GroupStart { hdr }) => {
+                (doc.hdrs[*hdr as usize].flat_width as usize)
+                    .saturating_mul(2)
+                    .clamp(256, 1 << 20)
             }
-            _ => ops.len() * 4,
+            _ => doc.ops.len() * 4,
         }
     };
 
@@ -63,176 +67,14 @@ pub fn render_with_hint(ops: &[FmtOp<'_>], printer: Printer, size_hint: usize) -
         group_depth: 0,
         indent: 0,
         current_line_len: 0,
-        max_width: printer.max_width,
+        // ABI v2: widths are u32, and `max_width` is clamped to u32::MAX / 2.
+        max_width: printer.max_width.min(u32::MAX as usize / 2),
         indent_size: printer.indent,
+        indent_ch,
+        indent_cache: vec![indent_ch; 128],
     };
 
-    let mut pc = 0;
-    while pc < ops.len() {
-        match ops[pc] {
-            FmtOp::Text(s) => {
-                state.output.extend_from_slice(s.as_bytes());
-                state.current_line_len += s.len();
-            }
-
-            FmtOp::OwnedText(ref s) => {
-                state.output.extend_from_slice(s.as_bytes());
-                state.current_line_len += s.len();
-            }
-
-            FmtOp::QuotedText(s) => {
-                state.output.push(b'"');
-                state.output.extend_from_slice(s.as_bytes());
-                state.output.push(b'"');
-                state.current_line_len += s.len() + 2;
-            }
-
-            FmtOp::Char(c) => {
-                state.output.push(c);
-                state.current_line_len += 1;
-            }
-
-            FmtOp::I64(v) => emit_int(v, &mut state),
-            FmtOp::U64(v) => emit_int(v, &mut state),
-
-            FmtOp::I128Hi(hi) => {
-                // Wide-op: reconstruct i128 from hi + next op (I128Lo)
-                pc += 1;
-                if let FmtOp::I128Lo(lo) = ops[pc] {
-                    let val = ((hi as i128) << 64) | (lo as i128);
-                    emit_int(val, &mut state);
-                }
-            }
-
-            FmtOp::U128Hi(hi) => {
-                pc += 1;
-                if let FmtOp::U128Lo(lo) = ops[pc] {
-                    let val = ((hi as u128) << 64) | (lo as u128);
-                    emit_int(val, &mut state);
-                }
-            }
-
-            FmtOp::I128Lo(_) | FmtOp::U128Lo(_) => {
-                // Should only be reached after I128Hi/U128Hi — skip if orphaned.
-            }
-
-            FmtOp::F64(v) => emit_f64(v, &mut state),
-
-            FmtOp::GroupStart { flat_width } => {
-                let breaks = state.current_line_len + flat_width as usize > state.max_width;
-                state.push_group(breaks);
-            }
-
-            FmtOp::GroupEnd => {
-                state.pop_group();
-            }
-
-            FmtOp::IndentStart => {
-                state.indent += state.indent_size;
-            }
-
-            FmtOp::IndentEnd => {
-                state.indent = state.indent.saturating_sub(state.indent_size);
-            }
-
-            FmtOp::WrapStart { open, flat_width } => {
-                let breaks = state.current_line_len + flat_width as usize > state.max_width;
-                state.push_group(breaks);
-                state.output.push(open);
-                state.current_line_len += 1;
-                state.indent += state.indent_size;
-                if breaks {
-                    emit_newline(&mut state, &mut indent_cache);
-                }
-            }
-
-            FmtOp::WrapEnd { close } => {
-                state.indent = state.indent.saturating_sub(state.indent_size);
-                if state.in_break_mode() {
-                    emit_newline(&mut state, &mut indent_cache);
-                }
-                state.output.push(close);
-                state.current_line_len += 1;
-                state.pop_group();
-            }
-
-            FmtOp::Hardline => {
-                emit_newline(&mut state, &mut indent_cache);
-            }
-
-            FmtOp::Softline => {
-                if state.in_break_mode() {
-                    emit_newline(&mut state, &mut indent_cache);
-                } else {
-                    state.output.push(b' ');
-                    state.current_line_len += 1;
-                }
-            }
-
-            FmtOp::BreakLine => {
-                if state.in_break_mode() {
-                    emit_newline(&mut state, &mut indent_cache);
-                }
-            }
-
-            FmtOp::Mediumline => {
-                if state.current_line_len > state.max_width / 2 {
-                    emit_newline(&mut state, &mut indent_cache);
-                }
-            }
-
-            FmtOp::CommaSep => {
-                if state.in_break_mode() {
-                    state.output.push(b',');
-                    state.current_line_len += 1;
-                    emit_newline(&mut state, &mut indent_cache);
-                } else {
-                    state.output.extend_from_slice(b", ");
-                    state.current_line_len += 2;
-                }
-            }
-
-            FmtOp::Sep {
-                flat,
-                flat_len,
-                brk,
-                brk_len,
-            } => {
-                if state.in_break_mode() {
-                    state.output.extend_from_slice(&brk[..brk_len as usize]);
-                    state.current_line_len += brk_len as usize;
-                    emit_newline(&mut state, &mut indent_cache);
-                } else {
-                    state.output.extend_from_slice(&flat[..flat_len as usize]);
-                    state.current_line_len += flat_len as usize;
-                }
-            }
-
-            FmtOp::IfBreak {
-                break_count,
-                flat_count,
-            } => {
-                if state.in_break_mode() {
-                    let break_end = pc + 1 + break_count as usize;
-                    for op in &ops[pc + 1..break_end] {
-                        render_single_op(op, &mut state, &mut indent_cache);
-                    }
-                    pc = break_end + flat_count as usize;
-                    continue;
-                } else {
-                    let flat_start = pc + 1 + break_count as usize;
-                    let flat_end = flat_start + flat_count as usize;
-                    for op in &ops[flat_start..flat_end] {
-                        render_single_op(op, &mut state, &mut indent_cache);
-                    }
-                    pc = flat_end;
-                    continue;
-                }
-            }
-        }
-
-        pc += 1;
-    }
+    state.run(&doc.ops, &doc.hdrs, 0, doc.ops.len());
 
     // Strip trailing whitespace.
     while state
@@ -252,11 +94,13 @@ struct RenderState {
     output: Vec<u8>,
     /// Bitfield group stack: bit N = break mode at depth N. Supports 64 nesting levels.
     group_bits: u64,
-    group_depth: u8,
+    group_depth: u32,
     indent: usize,
     current_line_len: usize,
     max_width: usize,
     indent_size: usize,
+    indent_ch: u8,
+    indent_cache: Vec<u8>,
 }
 
 impl RenderState {
@@ -285,6 +129,168 @@ impl RenderState {
     fn pop_group(&mut self) {
         self.group_depth = self.group_depth.saturating_sub(1);
     }
+
+    /// L1/L2/L3′: does the group with header `h` break here? A group nested
+    /// in a flat group is flat; elsewhere (in a broken group, or at depth 0)
+    /// it breaks unless its flattening fits with its trailing rest.
+    #[inline(always)]
+    fn decide(&self, h: &GroupHdr) -> bool {
+        if self.group_depth > 0 && !self.in_break_mode() {
+            return false;
+        }
+        h.has_hard()
+            || self.current_line_len as u64 + h.flat_width as u64 + h.trailing as u64
+                > self.max_width as u64
+    }
+
+    #[inline(always)]
+    fn text(&mut self, s: &[u8]) {
+        self.output.extend_from_slice(s);
+        self.current_line_len += s.len();
+    }
+
+    #[inline(always)]
+    fn newline(&mut self) {
+        // Strip trailing whitespace before the break.
+        while self.output.last().is_some_and(|&b| b == b' ' || b == b'\t') {
+            self.output.pop();
+        }
+        self.output.push(b'\n');
+        // Emit indent from cache (single extend_from_slice instead of per-byte push).
+        if self.indent > self.indent_cache.len() {
+            self.indent_cache.resize(self.indent, self.indent_ch);
+        }
+        self.output
+            .extend_from_slice(&self.indent_cache[..self.indent]);
+        self.current_line_len = self.indent;
+    }
+
+    /// Render `ops[lo..hi]`. An `IfBreak` renders the branch its mode takes
+    /// (law L6) by recursing on that branch's range.
+    fn run(&mut self, ops: &[FmtOp<'_>], hdrs: &[GroupHdr], lo: usize, hi: usize) {
+        let mut pc = lo;
+        while pc < hi {
+            match ops[pc] {
+                FmtOp::Text(s) => self.text(s.as_bytes()),
+                FmtOp::OwnedText(ref s) => self.text(s.as_bytes()),
+                FmtOp::QuotedText(s) => {
+                    self.output.push(b'"');
+                    self.output.extend_from_slice(s.as_bytes());
+                    self.output.push(b'"');
+                    self.current_line_len += s.len() + 2;
+                }
+                FmtOp::Char(c) => {
+                    self.output.push(c);
+                    self.current_line_len += 1;
+                }
+
+                FmtOp::I64(v) => emit_int(v, self),
+                FmtOp::U64(v) => emit_int(v, self),
+
+                FmtOp::I128Hi(hi_bits) => {
+                    // Wide-op: reconstruct i128 from hi + next op (I128Lo)
+                    pc += 1;
+                    if let Some(&FmtOp::I128Lo(lo_bits)) = ops.get(pc) {
+                        emit_int(((hi_bits as i128) << 64) | (lo_bits as i128), self);
+                    }
+                }
+                FmtOp::U128Hi(hi_bits) => {
+                    pc += 1;
+                    if let Some(&FmtOp::U128Lo(lo_bits)) = ops.get(pc) {
+                        emit_int(((hi_bits as u128) << 64) | (lo_bits as u128), self);
+                    }
+                }
+                // Only reachable after its high op, which consumed it.
+                FmtOp::I128Lo(_) | FmtOp::U128Lo(_) => {}
+
+                FmtOp::F64(v) => emit_f64(v, self),
+
+                FmtOp::GroupStart { hdr } => {
+                    let breaks = self.decide(&hdrs[hdr as usize]);
+                    self.push_group(breaks);
+                }
+                FmtOp::GroupEnd => self.pop_group(),
+
+                FmtOp::IndentStart => self.indent += self.indent_size,
+                FmtOp::IndentEnd => {
+                    self.indent = self.indent.saturating_sub(self.indent_size);
+                }
+
+                FmtOp::WrapStart { open, hdr } => {
+                    let breaks = self.decide(&hdrs[hdr as usize]);
+                    self.push_group(breaks);
+                    self.output.push(open);
+                    self.current_line_len += 1;
+                    self.indent += self.indent_size;
+                    if breaks {
+                        self.newline();
+                    }
+                }
+                FmtOp::WrapEnd { close } => {
+                    self.indent = self.indent.saturating_sub(self.indent_size);
+                    if self.in_break_mode() {
+                        self.newline();
+                    }
+                    self.output.push(close);
+                    self.current_line_len += 1;
+                    self.pop_group();
+                }
+
+                FmtOp::Hardline => self.newline(),
+                FmtOp::Softline => {
+                    if self.in_break_mode() {
+                        self.newline();
+                    } else {
+                        self.output.push(b' ');
+                        self.current_line_len += 1;
+                    }
+                }
+                FmtOp::BreakLine => {
+                    if self.in_break_mode() {
+                        self.newline();
+                    }
+                }
+                FmtOp::CommaSep => {
+                    if self.in_break_mode() {
+                        self.output.push(b',');
+                        self.current_line_len += 1;
+                        self.newline();
+                    } else {
+                        self.text(b", ");
+                    }
+                }
+                FmtOp::Sep {
+                    flat,
+                    flat_len,
+                    brk,
+                    brk_len,
+                } => {
+                    if self.in_break_mode() {
+                        self.text(&brk[..brk_len as usize]);
+                        self.newline();
+                    } else {
+                        self.text(&flat[..flat_len as usize]);
+                    }
+                }
+
+                FmtOp::IfBreak {
+                    break_count,
+                    flat_count,
+                } => {
+                    let flat_start = pc + 1 + break_count as usize;
+                    let rest = flat_start + flat_count as usize;
+                    if self.in_break_mode() {
+                        self.run(ops, hdrs, pc + 1, flat_start);
+                    } else {
+                        self.run(ops, hdrs, flat_start, rest);
+                    }
+                    pc = rest;
+                    continue;
+                }
+            }
+            pc += 1;
+        }
+    }
 }
 
 #[inline(always)]
@@ -297,138 +303,5 @@ fn emit_int<T: itoap::Integer>(value: T, state: &mut RenderState) {
 #[inline(always)]
 fn emit_f64(value: f64, state: &mut RenderState) {
     let mut buf = ryu::Buffer::new();
-    let s = buf.format_finite(value).as_bytes();
-    state.output.extend_from_slice(s);
-    state.current_line_len += s.len();
-}
-
-#[inline(always)]
-fn emit_newline(state: &mut RenderState, indent_cache: &mut Vec<u8>) {
-    // Strip trailing whitespace before the break.
-    while state
-        .output
-        .last()
-        .is_some_and(|&b| b == b' ' || b == b'\t')
-    {
-        state.output.pop();
-    }
-    state.output.push(b'\n');
-    // Emit indent from cache (single extend_from_slice instead of per-byte push).
-    if state.indent > indent_cache.len() {
-        indent_cache.resize(state.indent, indent_cache[0]);
-    }
-    state
-        .output
-        .extend_from_slice(&indent_cache[..state.indent]);
-    state.current_line_len = state.indent;
-}
-
-/// Render a single op (used by IfBreak to process sub-ranges).
-#[inline(always)]
-fn render_single_op(op: &FmtOp<'_>, state: &mut RenderState, indent_cache: &mut Vec<u8>) {
-    match op {
-        FmtOp::Text(s) => {
-            state.output.extend_from_slice(s.as_bytes());
-            state.current_line_len += s.len();
-        }
-        FmtOp::OwnedText(s) => {
-            state.output.extend_from_slice(s.as_bytes());
-            state.current_line_len += s.len();
-        }
-        FmtOp::QuotedText(s) => {
-            state.output.push(b'"');
-            state.output.extend_from_slice(s.as_bytes());
-            state.output.push(b'"');
-            state.current_line_len += s.len() + 2;
-        }
-        FmtOp::Char(c) => {
-            state.output.push(*c);
-            state.current_line_len += 1;
-        }
-        FmtOp::I64(v) => emit_int(*v, state),
-        FmtOp::U64(v) => emit_int(*v, state),
-        FmtOp::F64(v) => emit_f64(*v, state),
-        FmtOp::Hardline => emit_newline(state, indent_cache),
-        FmtOp::Softline => {
-            if state.in_break_mode() {
-                emit_newline(state, indent_cache);
-            } else {
-                state.output.push(b' ');
-                state.current_line_len += 1;
-            }
-        }
-        FmtOp::BreakLine => {
-            if state.in_break_mode() {
-                emit_newline(state, indent_cache);
-            }
-        }
-        FmtOp::Mediumline => {
-            if state.current_line_len > state.max_width / 2 {
-                emit_newline(state, indent_cache);
-            }
-        }
-        FmtOp::CommaSep => {
-            if state.in_break_mode() {
-                state.output.push(b',');
-                state.current_line_len += 1;
-                emit_newline(state, indent_cache);
-            } else {
-                state.output.extend_from_slice(b", ");
-                state.current_line_len += 2;
-            }
-        }
-        FmtOp::Sep {
-            flat,
-            flat_len,
-            brk,
-            brk_len,
-        } => {
-            if state.in_break_mode() {
-                state.output.extend_from_slice(&brk[..*brk_len as usize]);
-                state.current_line_len += *brk_len as usize;
-                emit_newline(state, indent_cache);
-            } else {
-                state.output.extend_from_slice(&flat[..*flat_len as usize]);
-                state.current_line_len += *flat_len as usize;
-            }
-        }
-        FmtOp::GroupStart { flat_width } => {
-            let breaks = state.current_line_len + *flat_width as usize > state.max_width;
-            state.push_group(breaks);
-        }
-        FmtOp::GroupEnd => {
-            state.pop_group();
-        }
-        FmtOp::IndentStart => {
-            state.indent += state.indent_size;
-        }
-        FmtOp::IndentEnd => {
-            state.indent = state.indent.saturating_sub(state.indent_size);
-        }
-        FmtOp::WrapStart { open, flat_width } => {
-            let breaks = state.current_line_len + *flat_width as usize > state.max_width;
-            state.push_group(breaks);
-            state.output.push(*open);
-            state.current_line_len += 1;
-            state.indent += state.indent_size;
-            if breaks {
-                emit_newline(state, indent_cache);
-            }
-        }
-        FmtOp::WrapEnd { close } => {
-            state.indent = state.indent.saturating_sub(state.indent_size);
-            if state.in_break_mode() {
-                emit_newline(state, indent_cache);
-            }
-            state.output.push(*close);
-            state.current_line_len += 1;
-            state.pop_group();
-        }
-        // Wide-ops and IfBreak shouldn't appear inside IfBreak sub-ranges.
-        FmtOp::I128Hi(_)
-        | FmtOp::I128Lo(_)
-        | FmtOp::U128Hi(_)
-        | FmtOp::U128Lo(_)
-        | FmtOp::IfBreak { .. } => {}
-    }
+    state.text(buf.format_finite(value).as_bytes());
 }

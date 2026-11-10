@@ -1,18 +1,20 @@
-use crate::op::FmtOp;
+use crate::layout::{BuildError, compile, f64_width};
+use crate::op::{Doc, FmtOp};
 use crate::utils::text_justify;
 
-/// Flat-buffer formatting builder. Constructs a `Vec<FmtOp>` with automatic
-/// `GroupStart.flat_width` patching.
+/// Flat-buffer formatting builder. Constructs a [`Doc`]: the `FmtOp` stream
+/// plus its [`GroupHdr`](crate::GroupHdr) table, which `finish()` computes.
 ///
-/// Usage:
-/// ```ignore
+/// ```
+/// use pprint::{FmtBuilder, PRINTER, render};
 /// let mut b = FmtBuilder::new();
 /// b.group(|b| {
 ///     b.text("hello");
 ///     b.softline();
 ///     b.text("world");
 /// });
-/// let ops = b.finish();
+/// let doc = b.finish().unwrap();
+/// assert_eq!(render(&doc, PRINTER), "hello world");
 /// ```
 pub struct FmtBuilder<'a> {
     ops: Vec<FmtOp<'a>>,
@@ -20,6 +22,9 @@ pub struct FmtBuilder<'a> {
     group_stack: Vec<(usize, u32)>,
     /// Running flat-mode width since the innermost GroupStart.
     running_width: u32,
+    /// The first misuse seen (a close with nothing open, a count past u32).
+    /// `finish()` returns it (law L8: refuse, never guess or panic).
+    error: Option<BuildError>,
 }
 
 impl<'a> FmtBuilder<'a> {
@@ -29,6 +34,7 @@ impl<'a> FmtBuilder<'a> {
             ops: Vec::with_capacity(256),
             group_stack: Vec::new(),
             running_width: 0,
+            error: None,
         }
     }
 
@@ -38,17 +44,30 @@ impl<'a> FmtBuilder<'a> {
             ops: Vec::with_capacity(cap),
             group_stack: Vec::new(),
             running_width: 0,
+            error: None,
         }
     }
 
-    /// Consume the builder and return the op buffer.
-    #[inline]
-    pub fn finish(mut self) -> Vec<FmtOp<'a>> {
-        // Close any unclosed groups (from early returns in failed branches).
-        while !self.group_stack.is_empty() {
-            self.group_close();
+    /// Consume the builder and compile the document: validate the nesting,
+    /// build the group-header table, and compute each group's `trailing`
+    /// (law L3′) in one backward pass. An unbalanced stream (an unclosed
+    /// group or indent, a close with nothing open, an `IfBreak` branch that a
+    /// region crosses) is an `Err` (law L8); nothing is closed on the
+    /// caller's behalf.
+    pub fn finish(self) -> Result<Doc<'a>, BuildError> {
+        if let Some(e) = self.error {
+            return Err(e);
         }
-        self.ops
+        compile(self.ops)
+    }
+
+    fn refuse(&mut self, reason: &'static str) {
+        if self.error.is_none() {
+            self.error = Some(BuildError::Unbalanced {
+                pc: self.ops.len().min(u32::MAX as usize) as u32,
+                reason,
+            });
+        }
     }
 
     /// Save a checkpoint (op count + group stack depth) for rollback.
@@ -178,11 +197,11 @@ impl<'a> FmtBuilder<'a> {
         self.ops.push(FmtOp::U128Lo(v as u64));
     }
 
-    /// Emit a 64-bit float (rendered with Dragonbox by the renderer).
-    /// Uses a conservative upper-bound (24) for flat_width estimation.
+    /// Emit a 64-bit float (rendered with ryu by the renderer). Its flat
+    /// width is the exact printed length, so group decisions are exact.
     #[inline]
     pub fn f64(&mut self, v: f64) {
-        self.running_width += 24; // ryu max output length
+        self.running_width += f64_width(v) as u32;
         self.ops.push(FmtOp::F64(v));
     }
 
@@ -206,13 +225,11 @@ impl<'a> FmtBuilder<'a> {
 
     // ── Line ops ─────────────────────────────────────────────────
 
-    /// Unconditional line break.
+    /// Unconditional line break. It adds no flat width: `finish()` marks the
+    /// enclosing groups `HAS_HARD`, which forces them to break (law L2).
     #[inline]
     pub fn hardline(&mut self) {
         self.ops.push(FmtOp::Hardline);
-        // Hardline contributes max_width to flat_width so that any
-        // enclosing Group will always choose break mode.
-        self.running_width = self.running_width.saturating_add(10000);
     }
 
     /// In break mode: newline + indent. In flat mode: single space.
@@ -226,13 +243,6 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn break_line(&mut self) {
         self.ops.push(FmtOp::BreakLine);
-        // flat-mode width = 0
-    }
-
-    /// Line break when `current_line_len > max_width / 2`, otherwise nothing.
-    #[inline]
-    pub fn mediumline(&mut self) {
-        self.ops.push(FmtOp::Mediumline);
         // flat-mode width = 0
     }
 
@@ -252,24 +262,30 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn group_open(&mut self) {
         let pos = self.ops.len();
-        self.ops.push(FmtOp::GroupStart { flat_width: 0 });
+        self.ops.push(FmtOp::GroupStart { hdr: 0 });
         let saved_width = self.running_width;
         self.running_width = 0;
         self.group_stack.push((pos, saved_width));
     }
 
-    /// Close the innermost group, patching GroupStart.flat_width.
+    /// Close the innermost group, recording its flat width in the open
+    /// `GroupStart` (u32, saturating; `finish()` moves it to the header).
+    /// A close with no open group is refused by `finish()`.
     #[inline]
     pub fn group_close(&mut self) {
-        let (start_pos, outer_width) = self.group_stack.pop().unwrap();
+        let Some((start_pos, outer_width)) = self.group_stack.pop() else {
+            self.refuse("group_close with no open group");
+            return;
+        };
         let flat_width = self.running_width;
-        if let FmtOp::GroupStart {
-            flat_width: ref mut fw,
-        } = self.ops[start_pos]
-        {
-            *fw = flat_width.min(u16::MAX as u32) as u16;
+        match self.ops.get_mut(start_pos) {
+            Some(FmtOp::GroupStart { hdr }) => *hdr = flat_width,
+            _ => {
+                self.refuse("group_close after a restore past its group_open");
+                return;
+            }
         }
-        self.running_width = outer_width + flat_width;
+        self.running_width = outer_width.saturating_add(flat_width);
         self.ops.push(FmtOp::GroupEnd);
     }
 
@@ -297,22 +313,15 @@ impl<'a> FmtBuilder<'a> {
     /// Closure `f` emits the container's items. Automatically patches `flat_width`.
     pub fn wrap<F: FnOnce(&mut Self)>(&mut self, open: u8, close: u8, f: F) {
         let pos = self.ops.len();
-        self.ops.push(FmtOp::WrapStart {
-            open,
-            flat_width: 0,
-        });
+        self.ops.push(FmtOp::WrapStart { open, hdr: 0 });
         let saved_width = self.running_width;
         self.running_width = 1; // the open char
         f(self);
-        let flat_width = self.running_width + 1; // +1 for close char
-        if let FmtOp::WrapStart {
-            flat_width: ref mut fw,
-            ..
-        } = self.ops[pos]
-        {
-            *fw = flat_width.min(u16::MAX as u32) as u16;
+        let flat_width = self.running_width.saturating_add(1); // +1 for close char
+        if let Some(FmtOp::WrapStart { hdr, .. }) = self.ops.get_mut(pos) {
+            *hdr = flat_width;
         }
-        self.running_width = saved_width + flat_width;
+        self.running_width = saved_width.saturating_add(flat_width);
         self.ops.push(FmtOp::WrapEnd { close });
     }
 
@@ -363,22 +372,47 @@ impl<'a> FmtBuilder<'a> {
         let saved_width = self.running_width;
         let break_start = self.ops.len();
         break_fn(self);
-        let break_count = (self.ops.len() - break_start) as u16;
+        let break_count = self.count_since(break_start);
         self.running_width = saved_width;
 
         // Flat side: running_width accumulates normally.
         let flat_start = self.ops.len();
         flat_fn(self);
-        let flat_count = (self.ops.len() - flat_start) as u16;
+        let flat_count = self.count_since(flat_start);
 
-        if let FmtOp::IfBreak {
-            break_count: ref mut bc,
-            flat_count: ref mut fc,
-        } = self.ops[if_pos]
-        {
-            *bc = break_count;
-            *fc = flat_count;
+        match self.ops.get_mut(if_pos) {
+            Some(FmtOp::IfBreak {
+                break_count: bc,
+                flat_count: fc,
+            }) => {
+                *bc = break_count;
+                *fc = flat_count;
+            }
+            _ => self.refuse("if_break after a restore past its own start"),
         }
+    }
+
+    fn count_since(&mut self, start: usize) -> u32 {
+        match u32::try_from(self.ops.len().saturating_sub(start)) {
+            Ok(c) => c,
+            Err(_) => {
+                self.refuse("IfBreak branch longer than u32::MAX ops");
+                0
+            }
+        }
+    }
+
+    /// A fill separator, [L] `fillSep`'s `softline` generalized to any
+    /// separator: `text (trim_end sep) <> group (flatAlt linebreak (text ws))`
+    /// where `ws` is `sep`'s trailing whitespace. The separator breaks if and
+    /// only if the next item does not fit on the line (law L5), decided at
+    /// render time at the real column, so a group in the previous item sees
+    /// the separator's own decision (L3′(c)).
+    pub fn fill_sep(&mut self, sep: &'a str) {
+        let head = sep.trim_end();
+        let ws = &sep[head.len()..];
+        self.str(head);
+        self.group(|b| b.if_break(|b| b.break_line(), |b| b.str(ws)));
     }
 
     // ── Join ops ─────────────────────────────────────────────────
@@ -474,42 +508,24 @@ impl<'a> FmtBuilder<'a> {
         }
     }
 
-    /// Join items with a separator using LinearJoin (greedy line-breaking).
-    /// Breaks when the next item wouldn't fit on the current line.
-    pub fn linear_join<I, F>(
-        &mut self,
-        items: I,
-        flat_sep: &'a str,
-        max_width: usize,
-        mut emit_item: F,
-    ) where
+    /// Join items as a fill (law L5): each separator is a [`fill_sep`],
+    /// so it breaks if and only if the next item does not fit, decided by the
+    /// renderer at the real column and width (`[L] fillSep`).
+    ///
+    /// [`fill_sep`]: FmtBuilder::fill_sep
+    pub fn linear_join<I, F>(&mut self, items: I, flat_sep: &'a str, mut emit_item: F)
+    where
         I: IntoIterator,
         I::Item: 'a,
         F: FnMut(&mut Self, I::Item),
     {
-        let sep_width = flat_sep.len() as u32;
-        let mut line_width = 0u32;
         let mut first = true;
-
         for item in items {
-            let start_width = self.running_width;
-            emit_item(self, item);
-            let item_width = self.running_width - start_width;
-
-            if first {
-                line_width = item_width;
-                first = false;
-            } else {
-                let total = line_width + sep_width + item_width;
-                if total > max_width as u32 {
-                    // Break before this item.
-                    self.hardline();
-                    line_width = item_width;
-                } else {
-                    self.str(flat_sep);
-                    line_width = total;
-                }
+            if !first {
+                self.fill_sep(flat_sep);
             }
+            first = false;
+            emit_item(self, item);
         }
     }
 }

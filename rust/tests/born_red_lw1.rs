@@ -1,9 +1,11 @@
-//! sk-v27 LW1.PP-2: born-RED tests. Each one is `#[ignore]`d with its stated
-//! reason and its curing unit, so the branch's CI stays green while the
-//! defect stays on record. Run them with
-//! `cargo test --test born_red_lw1 -- --ignored`: each must FAIL, for the
-//! reason in its doc comment, until the curing unit lands; the cure removes
-//! the `#[ignore]`.
+//! sk-v27 LW1.PP-2: born-RED tests. Each was `#[ignore]`d with its stated
+//! reason and its curing unit, and read RED for that reason (LW2 base
+//! `b26b7b9`, ×2); the cure removed the `#[ignore]`. Each doc comment keeps
+//! its RED reason and names the unit that cured it. Cured here: LW2.PP-1
+//! (u32 headers), LW2.PP-2 (`trailing`, structural hard, fill), and the L8
+//! width-0 panic, cured by LW2.PP-3's L8 law (it was routed to LW3.PP-1).
+//! The bodies changed only where the ABI did (`finish()` returns a `Doc`;
+//! `linear_join` takes no build-time width).
 //!
 //! Every expected string is pinned twice: by hand here, and by the Wadler
 //! oracle (`tests/oracle/`), whose agreement is asserted first so a RED can
@@ -12,7 +14,7 @@
 mod oracle;
 
 use oracle::lower::oracle_render;
-use pprint::{FmtBuilder, FmtOp, PRINTER, Printer, render};
+use pprint::{Doc, FmtBuilder, FmtOp, PRINTER, Printer, render};
 
 fn p(w: usize) -> Printer {
     Printer {
@@ -22,13 +24,13 @@ fn p(w: usize) -> Printer {
 }
 
 /// Assert the oracle reproduces `expected`, then that the v1 renderer does.
-fn check(ops: &[FmtOp<'_>], w: usize, expected: &str) {
-    let oracle = oracle_render(ops, p(w)).expect("lowerable");
+fn check(doc: &Doc<'_>, w: usize, expected: &str) {
+    let oracle = oracle_render(doc.ops(), p(w)).expect("lowerable");
     assert_eq!(
         oracle, expected,
         "oracle disagrees with the pinned expectation (w={w})"
     );
-    let got = render(ops, p(w));
+    let got = render(doc, p(w));
     assert_eq!(
         got, expected,
         "v1 renderer diverges from the oracle (w={w})"
@@ -41,9 +43,9 @@ fn check(ops: &[FmtOp<'_>], w: usize, expected: &str) {
 /// whose flat width is 66,002 is recorded as 65,535 and judged to fit a line
 /// of 65,600 columns. The oracle (and B.2 "flat_width is a u32") break it.
 ///
-/// Cure: LW2.PP-1 (ABI v2 `GroupHdr{flat_width: u32}`).
+/// Cured by LW2.PP-1 (ABI v2 `GroupHdr{flat_width: u32}`). The v1
+/// precondition (the header saturated at u16::MAX) is now the exact width.
 #[test]
-#[ignore = "born-RED LW1.PP-2: GroupStart.flat_width saturates at u16::MAX; cured by LW2.PP-1"]
 fn red_group_flat_width_u16_saturation() {
     let long = "a".repeat(66_000);
     let mut b = FmtBuilder::new();
@@ -52,23 +54,19 @@ fn red_group_flat_width_u16_saturation() {
         b.softline();
         b.text("b");
     });
-    let ops = b.finish();
-    assert_eq!(
-        match ops[0] {
-            FmtOp::GroupStart { flat_width } => flat_width,
-            _ => unreachable!(),
-        },
-        u16::MAX,
-        "precondition: the header saturated"
-    );
-    check(&ops, 65_600, &format!("{long}\nb"));
+    let doc = b.finish().unwrap();
+    let hdr = match doc.ops()[0] {
+        FmtOp::GroupStart { hdr } => doc.hdrs()[hdr as usize],
+        _ => unreachable!(),
+    };
+    assert_eq!(hdr.flat_width, 66_002, "the u32 header is exact");
+    check(&doc, 65_600, &format!("{long}\nb"));
 }
 
 /// RED reason: the same saturation in `wrap` (`WrapStart.flat_width: u16`).
 ///
-/// Cure: LW2.PP-1.
+/// Cured by LW2.PP-1.
 #[test]
-#[ignore = "born-RED LW1.PP-2: WrapStart.flat_width saturates at u16::MAX; cured by LW2.PP-1"]
 fn red_wrap_flat_width_u16_saturation() {
     let long = "a".repeat(66_000);
     let mut b = FmtBuilder::new();
@@ -77,17 +75,16 @@ fn red_wrap_flat_width_u16_saturation() {
         b.comma_sep();
         b.text("b");
     });
-    let ops = b.finish();
-    check(&ops, 65_600, &format!("[\n    {long},\n    b\n]"));
+    let doc = b.finish().unwrap();
+    check(&doc, 65_600, &format!("[\n    {long},\n    b\n]"));
 }
 
 /// RED reason (found by this unit, same class): `if_break` stores its branch
 /// lengths as `(len) as u16`, which *wraps*: a 65,537-op break branch is
 /// recorded as 1, and the renderer then emits flat-branch ops in break mode.
 ///
-/// Cure: LW2.PP-1 (`IfBreak{then: Range<u32>, else: Range<u32>}`).
+/// Cured by LW2.PP-1 (`IfBreak{break_count: u32, flat_count: u32}`).
 #[test]
-#[ignore = "born-RED LW1.PP-2: IfBreak branch counts wrap at u16; cured by LW2.PP-1"]
 fn red_if_break_count_u16_wrap() {
     let mut b = FmtBuilder::new();
     b.group(|b| {
@@ -101,8 +98,8 @@ fn red_if_break_count_u16_wrap() {
             |b| b.char(b'y'),
         );
     });
-    let ops = b.finish();
-    let got = render(&ops, p(80));
+    let doc = b.finish().unwrap();
+    let got = render(&doc, p(80));
     assert_eq!(got, format!("\n{}", "x".repeat(65_537)));
 }
 
@@ -112,9 +109,8 @@ fn red_if_break_count_u16_wrap() {
 /// divergence on a trailing-content case").
 /// RED reason: v1 decides `col + flat_width(G) <= w` and ignores the text
 /// after `GroupEnd`; [W] §4 `better` asks `fits` about the rest up to the
-/// first line, so "cccc" counts. Cure: LW2.PP-2 (`trailing` at `finish()`).
+/// first line, so "cccc" counts. Cured by LW2.PP-2 (`trailing` at `finish()`).
 #[test]
-#[ignore = "born-RED LW1.PP-2: v1 group decision ignores trailing text; cured by LW2.PP-2"]
 fn red_l3_trailing_text_after_group() {
     let mut b = FmtBuilder::new();
     b.group(|b| {
@@ -123,9 +119,9 @@ fn red_l3_trailing_text_after_group() {
         b.text("bbb");
     });
     b.text("cccc");
-    let ops = b.finish();
-    check(&ops, 11, "aaa bbbcccc"); // fits with its trailing: flat (GREEN today)
-    check(&ops, 10, "aaa\nbbbcccc"); // 7 + 4 > 10: must break (RED today)
+    let doc = b.finish().unwrap();
+    check(&doc, 11, "aaa bbbcccc"); // fits with its trailing: flat
+    check(&doc, 10, "aaa\nbbbcccc"); // 7 + 4 > 10: must break (RED at v1)
 }
 
 /// L3′(b), the `HAS_HARD` sibling. G is followed by "c" and then a later group
@@ -136,9 +132,8 @@ fn red_l3_trailing_text_after_group() {
 ///   (critic C2-O1, "too pessimistic"). GREEN today; it guards the cure.
 /// - w = 6: 7 > 6, so G must break. RED today: v1 ignores the trailing "cd".
 ///
-/// Cure: LW2.PP-2 (L3′ clause (b) in the monotone-stack `trailing`).
+/// Cured by LW2.PP-2 (`trailing` stops at H's first line op).
 #[test]
-#[ignore = "born-RED LW1.PP-2: L3' (b) HAS_HARD-sibling rest lookahead; cured by LW2.PP-2"]
 fn red_l3_prime_has_hard_sibling() {
     let mut b = FmtBuilder::new();
     b.group(|b| {
@@ -154,9 +149,9 @@ fn red_l3_prime_has_hard_sibling() {
         b.hardline();
         b.text("f");
     });
-    let ops = b.finish();
-    check(&ops, 7, "aa bbcd\ne\nf");
-    check(&ops, 6, "aa\nbbcd\ne\nf");
+    let doc = b.finish().unwrap();
+    check(&doc, 7, "aa bbcd\ne\nf");
+    check(&doc, 6, "aa\nbbcd\ne\nf");
 }
 
 /// L3′(c), the fill ancestor. v1 has no fill op: a v1 producer fixes every
@@ -173,13 +168,13 @@ fn red_l3_prime_has_hard_sibling() {
 ///   L3′(c) requires the separator's own decision at run time, with the
 ///   item's trailing stopping at the `FillSep`.
 ///
-/// The v1 stream below is written out op by op with that build-time decision,
-/// so the RED isolates the static decision from `linear_join`'s own ordering
-/// defect (next test).
+/// The v1 stream was written out op by op with that build-time decision (a
+/// static `b.str(" ")`), so the RED isolated the static decision from
+/// `linear_join`'s own ordering defect (next test).
 ///
-/// Cure: LW2.PP-2 (fill with per-`FillSep` dynamic trailing).
+/// Cured by LW2.PP-2: the separator is now `fill_sep`, decided at render
+/// time, and the item group's trailing stops at it (L3′(c), L5).
 #[test]
-#[ignore = "born-RED LW1.PP-2: L3' (c) fill separator decided statically; cured by LW2.PP-2"]
 fn red_l3_prime_fill_ancestor() {
     use oracle::*;
     let item0 = cat(group(cat(text("aa"), cat(line(), text("bb")))), text(";"));
@@ -194,23 +189,25 @@ fn red_l3_prime_fill_ancestor() {
         b.text("bb");
     });
     b.char(b';');
-    // build-time fill decision from column 0: 6 + 1 + 2 = 9 <= 10, flat.
-    b.str(" ");
+    // v1 made a build-time decision here (6 + 1 + 2 = 9 <= 10 from column 0,
+    // so a static " "); v2 decides the separator at render time.
+    b.fill_sep(" ");
     b.text("cc");
-    assert_eq!(render(&b.finish(), p(10)), "xxaa bb;\ncc");
+    let doc = b.finish().unwrap();
+    check(&doc, 10, "xxaa bb;\ncc");
 }
 
 /// RED reason (found by this unit): `linear_join` emits each separator
 /// *after* the item it should precede (it calls `emit_item` before deciding
 /// the separator), so `["a","b","c"]` joined by ", " renders "ab, c,"
-/// before trailing-whitespace stripping. Cure: LW2.PP-2, where `linear_join`
-/// is re-expressed as `fill` over `FillSep` (L5).
+/// before trailing-whitespace stripping. Cured by LW2.PP-2, where
+/// `linear_join` is re-expressed as a fill over `fill_sep` (L5).
 #[test]
-#[ignore = "born-RED LW1.PP-2: linear_join emits the separator after the item; cured by LW2.PP-2"]
 fn red_linear_join_separator_order() {
     let mut b = FmtBuilder::new();
-    b.linear_join(["a", "b", "c"], ", ", 80, |b, s| b.text(s));
-    assert_eq!(render(&b.finish(), p(80)), "a, b, c");
+    b.linear_join(["a", "b", "c"], ", ", |b, s| b.text(s));
+    let doc = b.finish().unwrap();
+    check(&doc, 80, "a, b, c");
 }
 
 // ── L2: structural hard (PP-U2's falsifier) ─────────────────────────────────
@@ -218,9 +215,8 @@ fn red_linear_join_separator_order() {
 /// RED reason: v1 forces a break by adding 10,000 to the group's flat width;
 /// at w = 20,000 the sentinel no longer exceeds w, the group is judged flat,
 /// and its softline prints as a space next to a hard newline. L2 makes
-/// `HAS_HARD` structural. Cure: LW2.PP-1/PP-2 (sentinel removed).
+/// `HAS_HARD` structural. Cured by LW2.PP-1/PP-2 (sentinel removed).
 #[test]
-#[ignore = "born-RED LW1.PP-2: +10000 hardline sentinel; cured by LW2.PP-1/PP-2"]
 fn red_l2_hardline_sentinel_at_wide_width() {
     let mut b = FmtBuilder::new();
     b.group(|b| {
@@ -230,7 +226,7 @@ fn red_l2_hardline_sentinel_at_wide_width() {
         b.softline();
         b.text("c");
     });
-    check(&b.finish(), 20_000, "a\nb\nc");
+    check(&b.finish().unwrap(), 20_000, "a\nb\nc");
 }
 
 // ── L8: total (found by this unit) ──────────────────────────────────────────
@@ -239,13 +235,14 @@ fn red_l2_hardline_sentinel_at_wide_width() {
 /// `vec![ch; 128.min(max_width)]`, which is empty at `max_width = 0`; the
 /// first indented newline then reads `indent_cache[0]` and panics. L8: no
 /// panic on any sequence the builder accepts.
-/// Cure: LW3.PP-1 (the one-loop renderer's cached run of spaces).
+/// Routed to LW3.PP-1; cured earlier by LW2.PP-3, whose L8 law ("no panic
+/// on any sequence the builder accepts", at every width including 0) needs
+/// it: the indent run is seeded with 128 indent bytes, independent of width.
 #[test]
-#[ignore = "born-RED LW1.PP-2: render panics at max_width 0 with an indented newline; cured by LW3.PP-1"]
 fn red_l8_width_zero_indented_newline_panics() {
     let mut b = FmtBuilder::new();
     b.wrap(b'[', b']', |b| b.text("a"));
-    let ops = b.finish();
-    let got = std::panic::catch_unwind(|| render(&ops, p(0)));
+    let doc = b.finish().unwrap();
+    let got = std::panic::catch_unwind(|| render(&doc, p(0)));
     assert_eq!(got.ok().as_deref(), Some("[\n    a\n]"));
 }
