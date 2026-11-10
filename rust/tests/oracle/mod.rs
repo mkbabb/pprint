@@ -5,8 +5,8 @@
 //! - [W]  Philip Wadler, "A prettier printer", in *The Fun of Programming*,
 //!   2003. §3 (the algebra: `group`, `flatten`, `<|>`), §4 (the
 //!   efficient implementation: `pretty`, `best`, `be`, `better`,
-//!   `fits`, `layout`) and the utility combinators that follow
-//!   (`<+>`, `</>`, `folddoc`, `fill`).
+//!   `fits`, `layout`) and §5's utility combinators (`<+>`, `</>`,
+//!   `folddoc`, `spread`, `stack`, `bracket`, `<+/>`, `fillwords`, `fill`).
 //! - [L]  Daan Leijen, `Text.PrettyPrint.Leijen` (wl-pprint, 2001), for
 //!   `column`, `nesting`, `align`, `hang`, `indent`, `softline`,
 //!   `softbreak`, `linebreak`, `fillSep`, `width` and the padding `fill`.
@@ -186,6 +186,37 @@ pub fn folddoc(f: impl Fn(D, D) -> D + Copy, xs: &[D]) -> D {
         [x] => x.clone(),
         [x, rest @ ..] => f(x.clone(), folddoc(f, rest)),
     }
+}
+
+/// [W] `spread = folddoc (<+>)`.
+pub fn spread(xs: &[D]) -> D {
+    folddoc(space_cat, xs)
+}
+
+/// [W] `stack = folddoc (</>)` (Wadler's `</>`, a plain `line`).
+pub fn stack(xs: &[D]) -> D {
+    folddoc(w_line_cat, xs)
+}
+
+/// [W] `bracket l x r = group (text l <> nest 2 (line <> x) <> line <> text r)`.
+pub fn bracket(l: &str, x: D, r: &str) -> D {
+    group(cat(
+        text(l),
+        cat(nest(2, cat(line(), x)), cat(line(), text(r))),
+    ))
+}
+
+/// [W] `x <+/> y = x <> (text " " :<|> line) <> y`. The union is built
+/// directly; it keeps [W] §3's invariant (the first line of `text " "` is
+/// at least as long as that of `line`).
+pub fn space_or_line(x: D, y: D) -> D {
+    cat(x, cat(Rc::new(Doc::Union(text(" "), line())), y))
+}
+
+/// [W] `fillwords = folddoc (<+/>) . map text . words`.
+pub fn fillwords(s: &str) -> D {
+    let ws: Vec<D> = s.split_whitespace().map(text).collect();
+    folddoc(space_or_line, &ws)
 }
 
 /// [W] the list `fill`:

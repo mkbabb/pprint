@@ -104,6 +104,21 @@ fn w_fill_words() {
     assert_eq!(pretty(9, &d).unwrap(), "the quick\nbrown fox\njumps\nover");
 }
 
+/// [W] §5 utilities, checked by their defining equations: `spread` joins
+/// with spaces, `stack` with newlines, `bracket` breaks to a nest-2 block,
+/// and `fillwords` packs words greedily (`<+/>` takes `text " "` iff it fits).
+#[test]
+fn w5_utility_combinators() {
+    assert_eq!(pretty(0, &spread(&texts("a b c"))).unwrap(), "a b c");
+    assert_eq!(pretty(80, &stack(&texts("a b c"))).unwrap(), "a\nb\nc");
+    let br = bracket("[", spread(&texts("x y")), "]");
+    assert_eq!(pretty(80, &br).unwrap(), "[ x y ]");
+    assert_eq!(pretty(5, &br).unwrap(), "[\n  x y\n]");
+    let fw = fillwords("the quick brown fox jumps over");
+    assert_eq!(pretty(15, &fw).unwrap(), "the quick brown\nfox jumps over");
+    assert_eq!(pretty(9, &fw).unwrap(), "the quick\nbrown fox\njumps\nover");
+}
+
 // ── [L] combinators, checked against Leijen's documented examples ──────────
 
 #[test]
