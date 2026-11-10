@@ -46,6 +46,12 @@ v1's column-reading line op (it broke when `col > max_width / 2`) is deleted. It
 
 The renderer's group decision is O(1): a group nested in a flat group is flat. Otherwise the group breaks iff it is `HAS_HARD` or `col + flat_width + trailing > max_width`. `src/layout.rs` derives this rule from [W] §4 and shows it equals `better`/`fits` with the rest lookahead.
 
+## Freeze status (sk-v27 LW2, S15, LG-2.3)
+
+FROZEN in pprint at the 0.4 version line (`0.4.0-alpha.0`): the const asserts above and this record. `ABI-v2.sha256` fixes the bytes of `src/op.rs` and of this file, so any change to either re-takes that record and adds a dated addendum here.
+
+PROVISIONAL for consumers (delegate ruling A-8). bbnf-lang and parse-that still pin pprint `fe7e9ca` (0.3.6), so no consumer compiles against v2 yet. The consumer half closes at PP-U9, when both re-pin onto the 0.4 line with `cargo check --workspace` and `regen --check` GREEN ×2. Any change that port forces is an addendum to this file, never a silent edit.
+
 ## Not frozen here (later units)
 
 - `Ascii(AsciiByte)`, and the removal of `from_utf8_unchecked`: PP-U1.
