@@ -40,9 +40,9 @@ sequential ops are implicitly concatenated.
 
 - **Text/QuotedText/Char** — emit borrowed text, quoted text (`"…"`), or a single ASCII byte
 - **Numeric** — I64, U64, I128, U128, F64 — rendered inline by the renderer using itoap/ryu
-- **GroupStart/GroupEnd** — break-mode decision regions, `flat_width` pre-computed during construction
+- **GroupStart/GroupEnd** — break-mode decision regions; `flat_width` and `trailing` are computed by `finish()` into the `GroupHdr` table
 - **IndentStart/IndentEnd** — indentation regions
-- **Hardline/Softline/BreakLine/Mediumline** — line break variants with different break semantics
+- **Hardline/Softline/BreakLine** — line break variants with different break semantics
 - **IfBreak** — conditional op emission based on break mode
 
 ### The `Pretty` trait

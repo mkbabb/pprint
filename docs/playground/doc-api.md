@@ -76,12 +76,11 @@ use pprint::{indent, dedent};
 let doc = indent(Doc::from("nested content"));
 ```
 
-### Hardline, Softline, Mediumline, Line
+### Hardline, Softline, Line
 
 ```rust
 Doc::Hardline   // Always breaks — unconditional newline + indent
 Doc::Softline   // Breaks only when current_line_len > max_width
-Doc::Mediumline // Breaks when current_line_len > max_width / 2
 Doc::Line       // Raw newline (no indent)
 ```
 

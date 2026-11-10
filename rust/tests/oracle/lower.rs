@@ -1,4 +1,5 @@
-//! Lowering of today's (ABI v1) `FmtOp` stream onto the oracle's tree.
+//! Lowering of the `FmtOp` stream (ABI v2 since LW2.PP-1; the group headers
+//! are not read: the oracle decides every group itself) onto the oracle's tree.
 //!
 //! This reads `FmtOp` through its public enum only; it never calls into
 //! `render.rs`. Each op's lowering cites the oracle construct it denotes.
@@ -13,9 +14,6 @@ use pprint::{FmtOp, Printer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LowerError {
-    /// `Mediumline` reads the column: it is the [L] `column f` combinator that
-    /// law L4 excludes from the closed instruction set. No lowering is offered.
-    Mediumline,
     /// The stream is not a well-nested tree of Group/Indent/Wrap regions
     /// (law L8: unbalanced input is an `Err`, never a guess).
     Unbalanced(&'static str),
@@ -140,7 +138,6 @@ fn lower_range(ops: &[FmtOp<'_>], printer: Printer, base_depth: usize) -> Result
                 stack.last_mut().unwrap().parts.push(d);
                 continue;
             }
-            FmtOp::Mediumline => return Err(LowerError::Mediumline),
 
             FmtOp::GroupStart { .. } => {
                 group_depth += 1;

@@ -26,6 +26,12 @@ pub fn pprint<'a>(value: &'a impl Pretty<'a>, printer: Printer) -> String {
 }
 
 /// Pretty-print with an output buffer size hint.
+///
+/// # Panics
+///
+/// If `value`'s `Pretty` impl leaves the builder unbalanced (an explicit
+/// `group_open` or `indent_open` without its close). Impls written with the
+/// closure forms (`group`, `indent`, `wrap`) are balanced by construction.
 pub fn pprint_with_hint<'a>(
     value: &'a impl Pretty<'a>,
     printer: Printer,
@@ -33,7 +39,10 @@ pub fn pprint_with_hint<'a>(
 ) -> String {
     let mut b = FmtBuilder::new();
     value.pretty(&mut b);
-    render_with_hint(&b.finish(), printer, size_hint)
+    let doc = b
+        .finish()
+        .expect("a Pretty impl left the FmtBuilder unbalanced");
+    render_with_hint(&doc, printer, size_hint)
 }
 
 // ── Primitive impls ─────────────────────────────────────────────────────────

@@ -94,7 +94,7 @@ fn bench_build_only_1k(b: Bencher) {
     b.bench(|| {
         let mut builder = FmtBuilder::new();
         data.pretty(&mut builder);
-        black_box(builder.finish());
+        black_box(builder.finish().unwrap());
     });
 }
 
@@ -103,7 +103,7 @@ fn bench_render_only_1k(b: Bencher) {
     let data = create_flat_vec(1_000);
     let mut builder = FmtBuilder::new();
     data.pretty(&mut builder);
-    let ops = builder.finish();
+    let ops = builder.finish().unwrap();
     b.bench(|| black_box(render(&ops, PRINTER)));
 }
 
@@ -142,7 +142,7 @@ fn bench_pp_smart_join_1k(b: Bencher) {
                 item.pretty(b);
             });
         });
-        let ops = builder.finish();
+        let ops = builder.finish().unwrap();
         black_box(render(&ops, PRINTER))
     });
 }
@@ -161,7 +161,7 @@ fn bench_pp_smart_join_nested(b: Bencher) {
                 });
             });
         });
-        let ops = builder.finish();
+        let ops = builder.finish().unwrap();
         black_box(render(&ops, PRINTER))
     });
 }

@@ -167,7 +167,7 @@ fn p_hardline_forces_the_group_to_break() {
     assert_eq!(pretty(20_000, &d).unwrap(), "a\nb\nc");
 }
 
-// ── Lowering of v1 FmtOp ────────────────────────────────────────────────────
+// ── Lowering of FmtOp ──────────────────────────────────────────────────────
 
 fn p(w: usize) -> Printer {
     Printer {
@@ -182,29 +182,19 @@ fn lower_agrees_with_v1_on_a_wrapped_list_without_trailing() {
     b.wrap(b'[', b']', |b| {
         b.join(["alpha", "beta", "gamma"], |b, s| b.text(s));
     });
-    let ops = b.finish();
+    let doc = b.finish().unwrap();
+    let ops = doc.ops();
     for w in [10, 19, 20, 21, 80] {
         assert_eq!(
-            oracle_render(&ops, p(w)).unwrap(),
-            pprint::render(&ops, p(w)),
+            oracle_render(ops, p(w)).unwrap(),
+            pprint::render(&doc, p(w)),
             "w={w}"
         );
     }
-    assert_eq!(oracle_render(&ops, p(80)).unwrap(), "[alpha, beta, gamma]");
+    assert_eq!(oracle_render(ops, p(80)).unwrap(), "[alpha, beta, gamma]");
     assert_eq!(
-        oracle_render(&ops, p(10)).unwrap(),
+        oracle_render(ops, p(10)).unwrap(),
         "[\n    alpha,\n    beta,\n    gamma\n]"
-    );
-}
-
-#[test]
-fn lower_refuses_mediumline() {
-    let mut b = FmtBuilder::new();
-    b.text("x");
-    b.mediumline();
-    assert_eq!(
-        oracle_render(&b.finish(), p(80)),
-        Err(LowerError::Mediumline)
     );
 }
 

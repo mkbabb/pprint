@@ -4,7 +4,12 @@
 /// `Vec<FmtOp>` — no tree structure, no Box allocations, no pointer chasing.
 /// Sequential ops are implicitly concatenated.
 ///
-/// Size: 24 bytes (8-byte alignment). The largest inline variant is `Text(&str)` at 16 bytes.
+/// ABI v2 (sk-v27 LW2.PP-1). Size: 24 bytes, 8-byte alignment, const-asserted
+/// below. `OwnedText(String)` is the widest payload; the enum fits in 24 bytes
+/// only through the niche in `String`'s capacity field, so the assert is the
+/// guard against losing it. Group metadata (flat width, trailing width, end,
+/// flags) lives in the [`GroupHdr`] side table, indexed by `hdr`, with u32
+/// fields. The layout record is `rust/ABI-v2.md`.
 #[derive(Debug, Clone)]
 pub enum FmtOp<'a> {
     /// Emit borrowed source text. Zero-copy from the parsed input.
@@ -43,10 +48,14 @@ pub enum FmtOp<'a> {
     F64(f64),
 
     // ── Structural ops ──────────────────────────────────────────────
-    /// Begin a group region. The renderer checks:
-    ///   `current_line_len + flat_width > max_width` → set break mode for children.
-    /// `flat_width` is pre-computed during construction by the `FmtBuilder`.
-    GroupStart { flat_width: u16 },
+    /// Begin a group region: [W] §3 `group x = flatten x :<|> x`.
+    /// `hdr` indexes the document's [`GroupHdr`] table. The renderer chooses
+    /// flat if and only if the group is not `HAS_HARD` and
+    /// `column + flat_width + trailing <= max_width` (laws L1, L2, L3′).
+    ///
+    /// While a [`FmtBuilder`](crate::FmtBuilder) is still open, `hdr` holds
+    /// the group's running flat width; `finish()` replaces it with the index.
+    GroupStart { hdr: u32 },
 
     /// End the innermost group region.
     GroupEnd,
@@ -59,7 +68,8 @@ pub enum FmtOp<'a> {
 
     /// Begin a wrapped container: group + open delimiter + indent + break_line.
     /// Combines GroupStart + Char(open) + IndentStart + BreakLine into one op.
-    WrapStart { open: u8, flat_width: u16 },
+    /// `hdr` is as for `GroupStart`; the flat width counts both delimiters.
+    WrapStart { open: u8, hdr: u32 },
 
     /// End a wrapped container: indent_end + break_line + close char + group_end.
     /// Combines IndentEnd + BreakLine + Char(close) + GroupEnd into one op.
@@ -74,9 +84,6 @@ pub enum FmtOp<'a> {
     /// In break mode: newline + indent. In flat mode: nothing.
     BreakLine,
 
-    /// Line break when `current_line_len > max_width / 2`, otherwise nothing.
-    Mediumline,
-
     /// The universal comma separator: flat = `", "`, break = `","` + newline.
     /// Zero-payload fast path for the most common separator pattern.
     CommaSep,
@@ -90,7 +97,65 @@ pub enum FmtOp<'a> {
         brk_len: u8,
     },
 
-    /// In break mode: emit next `break_count` ops, then skip `flat_count`.
-    /// In flat mode: skip `break_count` ops, then emit `flat_count`.
-    IfBreak { break_count: u16, flat_count: u16 },
+    /// [P] `flatAlt`: in break mode emit the next `break_count` ops, then skip
+    /// `flat_count`; in flat mode skip `break_count` ops, then emit
+    /// `flat_count` (law L6). Counts are u32 (ABI v2).
+    IfBreak { break_count: u32, flat_count: u32 },
+}
+
+/// ABI v2's size bound. The 24-byte budget is part of the frozen layout
+/// (`rust/ABI-v2.md`): a variant that grows the enum is a compile error here.
+const _: () = assert!(std::mem::size_of::<FmtOp<'static>>() <= 24);
+const _: () = assert!(std::mem::align_of::<FmtOp<'static>>() == 8);
+
+/// Per-group metadata, one entry per `GroupStart`/`WrapStart`, in op order.
+/// All fields are u32 (ABI v2): a group wider than 65,535 columns is exact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupHdr {
+    /// Width of the group's flattened content ([W] §3 `flatten`), saturated
+    /// at `u32::MAX`. Meaningless when `HAS_HARD` is set.
+    pub flat_width: u32,
+    /// Width of the rest after the group up to the end of its first line,
+    /// as [W] §4 `fits` reads it (law L3′), saturated at `u32::MAX`.
+    pub trailing: u32,
+    /// Index of the group's closing op (`GroupEnd` or `WrapEnd`).
+    pub end_pc: u32,
+    /// `HAS_HARD`, `WRAP`.
+    pub flags: u32,
+}
+
+impl GroupHdr {
+    /// The group's flattening contains a hard line, so it can never be flat
+    /// (law L2: `flatten hardline = Fail`, `fits _ SFail = False`).
+    pub const HAS_HARD: u32 = 1 << 0;
+    /// The header belongs to a `WrapStart`.
+    pub const WRAP: u32 = 1 << 1;
+
+    #[inline(always)]
+    pub fn has_hard(&self) -> bool {
+        self.flags & Self::HAS_HARD != 0
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<GroupHdr>() == 16);
+
+/// A finished document: the op stream and its group-header table. Built once
+/// by [`FmtBuilder::finish`](crate::FmtBuilder::finish), rendered any number
+/// of times.
+#[derive(Debug, Clone, Default)]
+pub struct Doc<'a> {
+    pub ops: Vec<FmtOp<'a>>,
+    pub hdrs: Vec<GroupHdr>,
+}
+
+impl<'a> Doc<'a> {
+    #[inline]
+    pub fn ops(&self) -> &[FmtOp<'a>] {
+        &self.ops
+    }
+
+    #[inline]
+    pub fn hdrs(&self) -> &[GroupHdr] {
+        &self.hdrs
+    }
 }

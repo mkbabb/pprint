@@ -31,8 +31,9 @@ cargo clippy --workspace -- -D warnings
 The formatting pipeline is a **flat-buffer instruction set** (FmtOp) with a linear O(n) renderer.
 
 ### Core modules
-- `rust/src/op.rs` — `FmtOp` enum (24 bytes, Copy): Text, QuotedText, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart/End, IndentStart/End, WrapStart/End, Hardline, Softline, BreakLine, Mediumline, CommaSep, Sep, IfBreak
-- `rust/src/builder.rs` — `FmtBuilder`: constructs `Vec<FmtOp>` with auto `GroupStart.flat_width` patching
+- `rust/src/op.rs` — ABI v2 (`rust/ABI-v2.md`): `FmtOp` enum (24 bytes, const-asserted): Text, OwnedText, QuotedText, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart{hdr}/End, IndentStart/End, WrapStart{open,hdr}/End, Hardline, Softline, BreakLine, CommaSep, Sep, IfBreak{u32 counts}; `GroupHdr` side table (u32 flat_width, trailing, end_pc, flags); `Doc{ops, hdrs}`
+- `rust/src/builder.rs` — `FmtBuilder`: `finish()` returns `Result<Doc, BuildError>` (unbalanced input is `Err`)
+- `rust/src/layout.rs` — the compile step: nesting validation, `HAS_HARD` propagation, and the backward `trailing` pass ([W] §4 rest lookahead, law L3′)
 - `rust/src/render.rs` — Linear-scan renderer, `Printer` config struct, `render()`/`render_with_hint()`
 - `rust/src/pretty.rs` — `Pretty` trait, `pprint()` entry point, impls for all std types
 - `rust/src/utils.rs` — `text_justify` greedy bin-packing for SmartJoin
@@ -83,9 +84,8 @@ Local dev uses `.cargo/config.toml` with `[patch.crates-io]`; Cargo.toml uses cr
 - F64 flat_width uses conservative upper bound (24 bytes)
 - Render group stack is a `u64` bitfield (64-level depth, zero allocation). Depths >64 conservatively break.
 - `SmartJoin` — greedy bin-packing via text_justify, cursor walk (no HashSet)
-- `LinearJoin` — inline greedy breaking during build
+- `LinearJoin` — a fill: each separator is a `fill_sep`, decided at render time (law L5)
 - `Join` — delegates break decisions to enclosing Group/IfBreak, uses CommaSep
-- `Mediumline` — breaks when `current_line_len > max_width / 2`
 - Indent emission uses pre-allocated cache (`extend_from_slice` instead of per-byte push)
 - Derive macro `#[derive(Pretty)]` generates `Pretty<'a>` impls using wrap/comma_sep/merged field labels
 - Derive attributes: `#[pprint(skip)]`, `#[pprint(indent)]`, `#[pprint(verbose)]`, `#[pprint(rename = "...")]`, `#[pprint(getter = "...")]`
