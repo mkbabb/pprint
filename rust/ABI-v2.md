@@ -26,7 +26,8 @@ The widest payload is `OwnedText(String)` at 24 bytes. The enum still fits in 24
 | `Softline`, `BreakLine`, `CommaSep` | — | 0 | L1 | — |
 | `Sep { flat: [u8; 8], flat_len: u8, brk: [u8; 4], brk_len: u8 }` | | 14 | L1 | — |
 | `IfBreak { break_count: u32, flat_count: u32 }` | branch op counts | 8 | L6 | were u16; v1 wrapped at 65,536 |
-| ~~`Mediumline`~~ | | | | **deleted** (a `column` combinator outside L4; LW2.PP-2) |
+
+v1's column-reading line op (it broke when `col > max_width / 2`) is deleted. It was a [L] `column` combinator, which L4 keeps out of the instruction set (LW2.PP-2).
 
 ## `GroupHdr`: 16 bytes, one per `GroupStart`/`WrapStart`, in op order
 
