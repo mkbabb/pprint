@@ -169,7 +169,7 @@ fn bench_pp_smart_join_nested(b: Bencher) {
 // ── pretty crate benchmarks (Wadler-Lindig doc algebra) ─────────────────────
 
 fn pretty_crate_flat_vec(items: &[usize], width: usize) -> String {
-    let docs: Vec<RcDoc<()>> = items.iter().map(|i| RcDoc::as_string(i)).collect();
+    let docs: Vec<RcDoc<()>> = items.iter().map(RcDoc::as_string).collect();
     let sep = RcDoc::text(",").append(RcDoc::line());
     let body = RcDoc::intersperse(docs, sep);
     let doc = RcDoc::text("[")
@@ -185,7 +185,7 @@ fn pretty_crate_nested_vec(items: &[Vec<usize>], width: usize) -> String {
     let inner_docs: Vec<RcDoc<()>> = items
         .iter()
         .map(|inner| {
-            let docs: Vec<RcDoc<()>> = inner.iter().map(|i| RcDoc::as_string(i)).collect();
+            let docs: Vec<RcDoc<()>> = inner.iter().map(RcDoc::as_string).collect();
             let sep = RcDoc::text(",").append(RcDoc::line());
             let body = RcDoc::intersperse(docs, sep);
             RcDoc::text("[")
@@ -251,7 +251,7 @@ fn pretty_crate_tuples(items: &[(usize, f64)], width: usize) -> String {
 }
 
 fn pretty_crate_float_vec(items: &[f64], width: usize) -> String {
-    let docs: Vec<RcDoc<()>> = items.iter().map(|f| RcDoc::as_string(f)).collect();
+    let docs: Vec<RcDoc<()>> = items.iter().map(RcDoc::as_string).collect();
     let sep = RcDoc::text(",").append(RcDoc::line());
     let body = RcDoc::intersperse(docs, sep);
     let doc = RcDoc::text("[")

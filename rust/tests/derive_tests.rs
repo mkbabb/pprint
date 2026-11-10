@@ -69,10 +69,10 @@ fn test_struct_simple() {
 
 #[test]
 fn test_struct_unnamed() {
-    let s = TupleStruct(42, 3.14);
+    let s = TupleStruct(42, 2.5);
     let out = pprint(&s, PRINTER);
     assert!(out.contains("field_0: 42"), "got: {out}");
-    assert!(out.contains("field_1: 3.14"), "got: {out}"); // ryu outputs 3.14 in decimal
+    assert!(out.contains("field_1: 2.5"), "got: {out}"); // ryu outputs 2.5 in decimal
 }
 
 #[test]
@@ -151,6 +151,11 @@ fn test_enum_multi() {
 #[should_panic(expected = "pprint(skip)")]
 fn test_enum_skip_panics() {
     let e = TestEnum::Skipped(42);
+    // The payload is real data; only its rendering is skipped.
+    let TestEnum::Skipped(payload) = &e else {
+        unreachable!()
+    };
+    assert_eq!(*payload, 42);
     pprint(&e, PRINTER);
 }
 
