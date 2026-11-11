@@ -1,6 +1,6 @@
 [package]
 name = "pprint"
-version = "0.3.6"
+version = "0.5.0-alpha.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -14,15 +14,30 @@ categories = ["text-processing", "development-tools"]
 name = "pprint"
 path = "src/lib.rs"
 
+[features]
+default = []
+regex = ["dep:regex"]
+
 [dependencies]
-dragonbox = "0.1.8"
+ryu = "1.0"
 itoap = "1.0.1"
-pprint_derive = { path = "./derive", version = "0.2.2" }
-regex = "1.11"
-rustc-hash = "2"
+pprint_derive = { path = "./derive", version = "0.3.0" }
+regex = { version = "1.11", optional = true }
 
 [dev-dependencies]
 rand = "0.8"
+pretty = "0.12"
+divan = "0.1"
+
+[[bench]]
+name = "pprint"
+path = "benches/pprint.rs"
+harness = false
+
+[[bench]]
+name = "digit_count"
+path = "benches/digit_count.rs"
+harness = false
 
 [profile.bench]
 # opt-level = 0

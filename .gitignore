@@ -4,7 +4,6 @@ coverage/
 data/
 target/
 dist/
-.cargo/
 .claude/
 
 # Playwright MCP

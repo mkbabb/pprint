@@ -1,0 +1,18 @@
+# rust-toolchain.toml — the stable plane (sk-v27 LW2.TOPO-2)
+#
+# The pprint -> parse-that -> bbnf-lang workspaces build and test on stable.
+# The pin is the `rust-stable` row of bbnf-lang `bench/W0-BENCH-PINS.tsv` v2
+# (tag 1.99.1, 58cf8f9c3), and the three repositories carry the same file.
+#
+# Nightly is opt-in. Each repository's .cargo/config.toml ends with a nightly
+# alias family (parallel front end, shared generics, cranelift), run as
+# `cargo +nightly <alias>`; parse_that's portable-SIMD kernels sit behind its
+# `nightly` feature. Nothing in a default build reads either.
+#
+# Upgrade: bump `channel` and the W0-BENCH-PINS row in one commit, and record
+# the build plane of every bench arm against the new pin.
+
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

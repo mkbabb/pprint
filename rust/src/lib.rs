@@ -1,9 +1,19 @@
-pub mod doc;
-pub use doc::*;
+// ── FmtOp flat buffer system ────────────────────────────────────────────────
+pub mod builder;
+mod layout;
+pub mod op;
+pub mod render;
 
-pub mod print;
-pub use print::*;
+pub use builder::FmtBuilder;
+pub use layout::BuildError;
+pub use op::{Doc, FmtOp, GroupHdr};
+pub use render::{PRINTER, Printer, render, render_with_hint};
 
+// ── Pretty trait + standard type impls ──────────────────────────────────────
+pub mod pretty;
+pub use pretty::{Pretty, pprint, pprint_with_hint};
+
+// ── Shared utilities ────────────────────────────────────────────────────────
 pub mod utils;
 pub use utils::*;
 
