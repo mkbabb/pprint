@@ -59,3 +59,7 @@ PROVISIONAL for consumers (delegate ruling A-8). bbnf-lang and parse-that still 
 - Display-column width (`width.rs`): LW3.PP-1.
 - `LineSuffix`, `LineSuffixBoundary` and `BreakParent`: LW3.PP-2 (U4b).
 - The versioned stream encoding: LW3.PP-3.
+
+## Addendum, 2026-11-11: the version line (LW2.TOPO-4d, RULINGS 2026-11-11b TOPO-4-A2)
+
+The layout is unchanged: `src/op.rs` is byte-identical and its sha256 in `ABI-v2.sha256` is the same. Only the version line this record names moves. TOPO-4-A2 publishes `pprint` 0.4.0 from the 0.3-API tree the consumers pin (pprint `lw2/topo-4d-0.4` `6011442`, the content of `fe7e9ca`), because that tree breaks the API of 0.3.6. ABI v2 breaks the API of that 0.4.0 (the five items S13-G2 named: `finish`, `mediumline`, `linear_join`, `render`, `render_with_hint`), so under the same ruling its line is the next minor after 0.4.0: the crate is `0.5.0-alpha.0` from this addendum on, and a consumer edge onto ABI v2 says `version = "0.5.0-alpha.0"`. `0.4.0-alpha.0` is retired unpublished. Where the text above says "the 0.4 version line" or `0.4.0-alpha.0` for ABI v2, read the 0.5 line and `0.5.0-alpha.0`; PP-U9 re-pins the consumers onto the 0.5 line. `ABI-v2.sha256` is re-taken for this file.
