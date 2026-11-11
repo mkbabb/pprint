@@ -152,9 +152,9 @@ fn test_numeric_u128() {
 #[test]
 fn test_numeric_f64() {
     let mut b = FmtBuilder::new();
-    b.f64(3.14);
+    b.f64(2.5);
     let out = r(&b.finish(), 80);
-    assert!(out.starts_with("3.14"), "got: {out}");
+    assert!(out.starts_with("2.5"), "got: {out}");
 }
 
 #[test]
@@ -182,9 +182,9 @@ fn test_mixed_text_numeric() {
     b.text("x = ");
     b.i64(42);
     b.text(", y = ");
-    b.f64(3.14);
+    b.f64(2.5);
     let out = r(&b.finish(), 80);
-    assert!(out.starts_with("x = 42, y = 3.14"), "got: {out}");
+    assert!(out.starts_with("x = 42, y = 2.5"), "got: {out}");
 }
 
 // ── Mediumline ──────────────────────────────────────────────────────────────
@@ -263,14 +263,14 @@ fn test_custom_sep() {
 fn test_join_empty() {
     let mut b = FmtBuilder::new();
     let items: Vec<&str> = vec![];
-    b.join(items.into_iter(), |b, s| b.text(s));
+    b.join(items, |b, s| b.text(s));
     assert_eq!(r(&b.finish(), 80), "");
 }
 
 #[test]
 fn test_join_single() {
     let mut b = FmtBuilder::new();
-    b.join(["hello"].into_iter(), |b, s| b.text(s));
+    b.join(["hello"], |b, s| b.text(s));
     assert_eq!(r(&b.finish(), 80), "hello");
 }
 
@@ -278,7 +278,7 @@ fn test_join_single() {
 fn test_smart_join_basic() {
     let items = vec!["aaa", "bbb", "ccc", "ddd"];
     let mut b = FmtBuilder::new();
-    b.smart_join(items.into_iter(), ", ", 15, 0, |b, s| b.text(s));
+    b.smart_join(items, ", ", 15, 0, |b, s| b.text(s));
     let out = r(&b.finish(), 80);
     assert!(out.contains('\n'), "expected break in: {out}");
 }
@@ -287,7 +287,7 @@ fn test_smart_join_basic() {
 fn test_smart_join_all_fit() {
     let items = vec!["a", "b", "c"];
     let mut b = FmtBuilder::new();
-    b.smart_join(items.into_iter(), ", ", 80, 0, |b, s| b.text(s));
+    b.smart_join(items, ", ", 80, 0, |b, s| b.text(s));
     assert_eq!(r(&b.finish(), 80), "a, b, c");
 }
 
@@ -295,7 +295,7 @@ fn test_smart_join_all_fit() {
 fn test_linear_join_basic() {
     let items = vec!["aaa", "bbb", "ccc", "ddd"];
     let mut b = FmtBuilder::new();
-    b.linear_join(items.into_iter(), ", ", 12, |b, s| b.text(s));
+    b.linear_join(items, ", ", 12, |b, s| b.text(s));
     let out = r(&b.finish(), 80);
     assert!(out.contains('\n'), "expected break in: {out}");
 }

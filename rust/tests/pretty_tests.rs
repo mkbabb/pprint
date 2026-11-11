@@ -12,8 +12,8 @@ fn test_integers() {
 
 #[test]
 fn test_floats() {
-    let out = pprint(&3.14f64, PRINTER);
-    assert!(out.starts_with("3.14"), "got: {out}");
+    let out = pprint(&2.5f64, PRINTER);
+    assert!(out.starts_with("2.5"), "got: {out}");
 
     let out = pprint(&0.0f64, PRINTER);
     assert_eq!(out, "0.0");
