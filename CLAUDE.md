@@ -31,7 +31,7 @@ cargo clippy --workspace -- -D warnings
 The formatting pipeline is a **flat-buffer instruction set** (FmtOp) with a linear O(n) renderer.
 
 ### Core modules
-- `rust/src/op.rs` — ABI v2 (`rust/ABI-v2.md`): `FmtOp` enum (24 bytes, const-asserted): Text, OwnedText, QuotedText, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart{hdr}/End, IndentStart/End, WrapStart{open,hdr}/End, Hardline, Softline, BreakLine, CommaSep, Sep, IfBreak{u32 counts}; `GroupHdr` side table (u32 flat_width, trailing, end_pc, flags); `Doc{ops, hdrs}`
+- `rust/src/op.rs` — ABI v2 (`rust/ABI-v2.md`): `FmtOp` enum (24 bytes, const-asserted): Text, OwnedText, QuotedText, Char, I64, U64, I128Hi/Lo, U128Hi/Lo, F64, GroupStart{hdr}/End, IndentStart/End, WrapStart{open,hdr}/End, Hardline, Softline, BreakLine, CommaSep, Sep, IfBreak{u32 counts}, FillSep{hdr, spaces}, LineSuffix{len}, LineSuffixBoundary, BreakParent (LW3.PP-2, law L9); `GroupHdr` side table, 28 B (u32 flat_width, trailing, trailing_pending, cut, cut_pending, end_pc, flags); `Doc{ops, hdrs}`
 - `rust/src/builder.rs` — `FmtBuilder`: `finish()` returns `Result<Doc, BuildError>` (unbalanced input is `Err`)
 - `rust/src/layout.rs` — the compile step: nesting validation, `HAS_HARD` propagation, and the backward `trailing` pass ([W] §4 rest lookahead, law L3′)
 - `rust/src/render.rs` — Linear-scan renderer, `Printer` config struct, `render()`/`render_with_hint()`

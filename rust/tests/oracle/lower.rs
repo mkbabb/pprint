@@ -110,6 +110,33 @@ fn lower_range(ops: &[FmtOp<'_>], printer: Printer, base_depth: usize) -> Result
                 let b = cat(byte_text(&brk[..*brk_len as usize]), line());
                 Some(if flat_ctx { f } else { flat_alt(b, f) })
             }
+            // L5 / S8-B: [L] `softline = group line`, generalized to k
+            // spaces: `group (flatAlt linebreak (text (spaces k)))`. A group
+            // decides itself, at depth 0 too.
+            FmtOp::FillSep { spaces, .. } => {
+                let flat = if *spaces == 0 {
+                    nil()
+                } else {
+                    text(&" ".repeat(*spaces as usize))
+                };
+                Some(group(flat_alt(linebreak(), flat)))
+            }
+            // L9: Prettier's `lineSuffix` over the next `len` ops (leaves).
+            FmtOp::LineSuffix { len } => {
+                let lo = pc + 1;
+                let hi = lo + *len as usize;
+                if hi > ops.len() {
+                    return Err(LowerError::Unbalanced("LineSuffix range past end"));
+                }
+                let content = lower_range(&ops[lo..hi], printer, group_depth)?;
+                pc = hi;
+                stack.last_mut().unwrap().parts.push(line_suffix(content));
+                continue;
+            }
+            // L9: Prettier's `lineSuffixBoundary`.
+            FmtOp::LineSuffixBoundary => Some(boundary()),
+            // L2: Prettier's `breakParent`, as [P] `flatAlt nil Fail`.
+            FmtOp::BreakParent => Some(break_parent()),
             // [P] `flatAlt break_branch flat_branch`, branch ranges lowered
             // recursively in the same context.
             FmtOp::IfBreak {

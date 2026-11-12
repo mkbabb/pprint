@@ -79,11 +79,14 @@ pub fn render_with_hint(doc: &Doc<'_>, printer: Printer, size_hint: usize) -> St
         indent_size: printer.indent,
         indent_ch,
         indent_cache: String::new(),
+        pending: Vec::new(),
     };
 
     state.run(&doc.ops, &doc.hdrs);
 
-    // Strip trailing whitespace.
+    // A suffix still pending at the end is emitted there (L9), then trailing
+    // whitespace is stripped.
+    state.flush(&doc.ops);
     state.trim_trailing();
     state.output
 }
@@ -140,6 +143,9 @@ struct RenderState {
     indent_ch: char,
     /// A run of `indent_ch`, grown on demand; a newline copies a prefix.
     indent_cache: String,
+    /// The pending line suffixes (L9), in order: the op ranges of their
+    /// content, emitted just before the next structural newline.
+    pending: Vec<(usize, usize)>,
 }
 
 impl RenderState {
@@ -151,14 +157,49 @@ impl RenderState {
     /// L1/L2/L3′: does the group with header `h` break here? A group nested
     /// in a flat group is flat; elsewhere (in a broken group, or at depth 0)
     /// it breaks unless its flattening fits with its trailing rest.
+    ///
+    /// The width `fits` reads depends on whether a line suffix is pending
+    /// (L9): a pending suffix turns the flattening's first boundary into a
+    /// newline (`cut_pending`), a suffix inside the group can do the same
+    /// for a later boundary (`cut`), and the rest after the group is read
+    /// under the pending state the group leaves (`trailing_pending`).
     #[inline(always)]
     fn decide(&self, h: &GroupHdr) -> bool {
         if self.modes.depth > 0 && !self.in_break_mode() {
             return false;
         }
-        h.has_hard()
-            || self.current_line_len as u64 + h.flat_width as u64 + h.trailing as u64
-                > self.max_width as u64
+        if h.has_hard() {
+            return true;
+        }
+        let pending = !self.pending.is_empty();
+        let cut = if pending { h.cut_pending } else { h.cut };
+        let need = if cut != GroupHdr::NO_CUT {
+            cut as u64
+        } else {
+            let pend_after = pending || h.flags & GroupHdr::SUFFIX != 0;
+            let rest = if pend_after {
+                h.trailing_pending
+            } else {
+                h.trailing
+            };
+            h.flat_width as u64 + rest as u64
+        };
+        self.current_line_len as u64 + need > self.max_width as u64
+    }
+
+    /// Emit every pending line suffix, in order (L9). Their content is
+    /// leaves only (`finish()` refuses anything else).
+    fn flush(&mut self, ops: &[FmtOp<'_>]) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending);
+        for (lo, hi) in pending {
+            let mut pc = lo;
+            while pc < hi {
+                pc += self.leaf(ops, pc);
+            }
+        }
     }
 
     /// Emit a text leaf, counting display columns (LW3.PP-1b). Each line
@@ -213,10 +254,19 @@ impl RenderState {
         self.output.truncate(keep);
     }
 
+    /// A structural newline (a line op in break mode, a hard line, a
+    /// boundary with a suffix pending): pending suffixes are emitted first
+    /// (L9), trailing whitespace is removed, and the newline is dropped if
+    /// it would make a second blank line in a row (L9, at most one blank
+    /// line); the indentation follows either way.
     #[inline(always)]
-    fn newline(&mut self) {
+    fn newline(&mut self, ops: &[FmtOp<'_>]) {
+        self.flush(ops);
         self.trim_trailing();
-        self.output.push('\n');
+        let second_blank = self.output.ends_with("\n\n") || self.output == "\n";
+        if !second_blank {
+            self.output.push('\n');
+        }
         // Emit indent from cache (one push_str instead of per-char pushes).
         // `indent_ch` is one byte, so a byte prefix of the run is a char
         // boundary.
@@ -251,37 +301,20 @@ impl RenderState {
                 break;
             };
             match *op {
-                FmtOp::Text(s) => self.text(s),
-                FmtOp::OwnedText(ref s) => self.text(s),
-                FmtOp::QuotedText(s) => {
-                    self.output.push('"');
-                    self.current_line_len += 1;
-                    self.text(s);
-                    self.output.push('"');
-                    self.current_line_len += 1;
-                }
-                FmtOp::Char(c) => self.ascii(c),
-
-                FmtOp::I64(v) => emit_int(v, self),
-                FmtOp::U64(v) => emit_int(v, self),
-
-                FmtOp::I128Hi(hi_bits) => {
-                    // Wide-op: reconstruct i128 from hi + next op (I128Lo)
-                    pc += 1;
-                    if let Some(&FmtOp::I128Lo(lo_bits)) = ops.get(pc) {
-                        emit_int(((hi_bits as i128) << 64) | (lo_bits as i128), self);
-                    }
-                }
-                FmtOp::U128Hi(hi_bits) => {
-                    pc += 1;
-                    if let Some(&FmtOp::U128Lo(lo_bits)) = ops.get(pc) {
-                        emit_int(((hi_bits as u128) << 64) | (lo_bits as u128), self);
-                    }
+                FmtOp::Text(_)
+                | FmtOp::OwnedText(_)
+                | FmtOp::QuotedText(_)
+                | FmtOp::Char(_)
+                | FmtOp::I64(_)
+                | FmtOp::U64(_)
+                | FmtOp::I128Hi(_)
+                | FmtOp::U128Hi(_)
+                | FmtOp::F64(_) => {
+                    pc += self.leaf(ops, pc);
+                    continue;
                 }
                 // Only reachable after its high op, which consumed it.
                 FmtOp::I128Lo(_) | FmtOp::U128Lo(_) => {}
-
-                FmtOp::F64(v) => emit_f64(v, self),
 
                 FmtOp::GroupStart { hdr } => {
                     let breaks = self.decide(&hdrs[hdr as usize]);
@@ -300,22 +333,22 @@ impl RenderState {
                     self.ascii(open);
                     self.indent += self.indent_size;
                     if breaks {
-                        self.newline();
+                        self.newline(ops);
                     }
                 }
                 FmtOp::WrapEnd { close } => {
                     self.indent = self.indent.saturating_sub(self.indent_size);
                     if self.in_break_mode() {
-                        self.newline();
+                        self.newline(ops);
                     }
                     self.ascii(close);
                     self.modes.pop();
                 }
 
-                FmtOp::Hardline => self.newline(),
+                FmtOp::Hardline => self.newline(ops),
                 FmtOp::Softline => {
                     if self.in_break_mode() {
-                        self.newline();
+                        self.newline(ops);
                     } else {
                         self.output.push(' ');
                         self.current_line_len += 1;
@@ -323,14 +356,14 @@ impl RenderState {
                 }
                 FmtOp::BreakLine => {
                     if self.in_break_mode() {
-                        self.newline();
+                        self.newline(ops);
                     }
                 }
                 FmtOp::CommaSep => {
                     if self.in_break_mode() {
                         self.output.push(',');
                         self.current_line_len += 1;
-                        self.newline();
+                        self.newline(ops);
                     } else {
                         self.ascii_str(", ");
                     }
@@ -343,11 +376,40 @@ impl RenderState {
                 } => {
                     if self.in_break_mode() {
                         self.ascii_run(&brk[..(brk_len as usize).min(brk.len())]);
-                        self.newline();
+                        self.newline(ops);
                     } else {
                         self.ascii_run(&flat[..(flat_len as usize).min(flat.len())]);
                     }
                 }
+
+                // A one-op group (L5): a newline if it breaks, else its
+                // spaces.
+                FmtOp::FillSep { hdr, spaces } => {
+                    if self.decide(&hdrs[hdr as usize]) {
+                        self.newline(ops);
+                    } else {
+                        for _ in 0..spaces {
+                            self.output.push(' ');
+                        }
+                        self.current_line_len += spaces as usize;
+                    }
+                }
+
+                // L9: hold the content back until the next newline.
+                FmtOp::LineSuffix { len } => {
+                    let lo = pc + 1;
+                    let hi = (lo + len as usize).min(ops.len());
+                    self.pending.push((lo, hi));
+                    pc = hi;
+                    continue;
+                }
+                FmtOp::LineSuffixBoundary => {
+                    if !self.pending.is_empty() {
+                        self.newline(ops);
+                    }
+                }
+                // L2 only: `finish()` marked the groups around it.
+                FmtOp::BreakParent => {}
 
                 FmtOp::IfBreak {
                     break_count,
@@ -367,6 +429,44 @@ impl RenderState {
             }
             pc += 1;
         }
+    }
+}
+
+impl RenderState {
+    /// Emit the leaf at `pc`; returns the number of ops it takes (2 for a
+    /// 128-bit pair).
+    #[inline(always)]
+    fn leaf(&mut self, ops: &[FmtOp<'_>], pc: usize) -> usize {
+        match ops[pc] {
+            FmtOp::Text(s) => self.text(s),
+            FmtOp::OwnedText(ref s) => self.text(s),
+            FmtOp::QuotedText(s) => {
+                self.output.push('"');
+                self.current_line_len += 1;
+                self.text(s);
+                self.output.push('"');
+                self.current_line_len += 1;
+            }
+            FmtOp::Char(c) => self.ascii(c),
+            FmtOp::I64(v) => emit_int(v, self),
+            FmtOp::U64(v) => emit_int(v, self),
+            FmtOp::I128Hi(hi_bits) => {
+                // Wide-op: reconstruct i128 from hi + next op (I128Lo).
+                if let Some(&FmtOp::I128Lo(lo_bits)) = ops.get(pc + 1) {
+                    emit_int(((hi_bits as i128) << 64) | (lo_bits as i128), self);
+                }
+                return 2;
+            }
+            FmtOp::U128Hi(hi_bits) => {
+                if let Some(&FmtOp::U128Lo(lo_bits)) = ops.get(pc + 1) {
+                    emit_int(((hi_bits as u128) << 64) | (lo_bits as u128), self);
+                }
+                return 2;
+            }
+            FmtOp::F64(v) => emit_f64(v, self),
+            _ => {}
+        }
+        1
     }
 }
 
