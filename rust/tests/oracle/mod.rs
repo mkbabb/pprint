@@ -20,9 +20,11 @@
 //! `rust/src/render.rs`: the oracle reads `FmtOp` only through its public
 //! enum (in `lower.rs`), and renders through its own `be`/`fits`/`layout`.
 //!
-//! Width is Wadler's `length s`, i.e. the count of `Char`s (Unicode scalar
-//! values). Display-column width is a later unit (LW3.PP-1, `width.rs`); the
-//! LW1 corpora are ASCII, where the two agree.
+//! Width is Wadler's `length s` read as display columns (sk-v27 LW3.PP-1b):
+//! [`length`] measures a `TEXT` with `unicode-width` directly (UAX #11, East
+//! Asian Wide = 2, combining marks = 0), sharing no code with pprint's
+//! `width.rs`. Through LW2 it was the count of `Char`s, which agrees on the
+//! ASCII corpora of LW1 and LW2 only.
 //!
 //! The implementation is deliberately the naive, lazy one: `be` is an
 //! iterator over a persistent work list, and `better` clones that iterator to
@@ -70,6 +72,11 @@ pub enum Doc {
 }
 
 pub type D = Rc<Doc>;
+
+/// [W] §4 `length s`, in display columns (LW3.PP-1b).
+pub fn length(s: &str) -> isize {
+    unicode_width::UnicodeWidthStr::width(s) as isize
+}
 
 // ── [W] §3: the combinators ─────────────────────────────────────────────────
 
@@ -247,6 +254,24 @@ pub fn softline() -> D {
     group(line())
 }
 
+/// A line feed inside a leaf: a hard line at column 0, whatever the nesting,
+/// [L] `nesting (\i -> nest (-i) hardline)`. Its flattening fails ([P]
+/// `flatten hardline = Fail`), so a group holding it breaks.
+pub fn leaf_newline() -> D {
+    nesting(|i| nest(-i, hardline()))
+}
+
+/// A leaf that may hold line feeds: its lines as `text`, joined by
+/// [`leaf_newline`] (LW3.PP-1b).
+pub fn leaf_text(s: &str) -> D {
+    let mut parts = s.split('\n');
+    let mut d = text(parts.next().unwrap_or(""));
+    for line in parts {
+        d = cat(d, cat(leaf_newline(), text(line)));
+    }
+    d
+}
+
 /// [L] `softbreak = group linebreak`.
 pub fn softbreak() -> D {
     group(linebreak())
@@ -394,7 +419,7 @@ impl Iterator for Be {
                 }
                 Doc::Nest(j, a) => self.push(i + j, a.clone()),
                 Doc::Text(s) => {
-                    self.k += s.chars().count() as isize;
+                    self.k += length(s);
                     return Some(SItem::Text(s.clone()));
                 }
                 Doc::Line | Doc::LineBreak | Doc::HardLine => {
@@ -443,7 +468,7 @@ pub fn fits(mut w: isize, mut x: Be) -> bool {
         }
         match x.next() {
             None => return true,
-            Some(SItem::Text(s)) => w -= s.chars().count() as isize,
+            Some(SItem::Text(s)) => w -= length(&s),
             Some(SItem::Line(_)) => return true,
             Some(SItem::Fail) => return false,
         }

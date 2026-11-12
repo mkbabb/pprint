@@ -30,6 +30,7 @@
 //! ```text
 //! F(end)            = 0                               -- fits w Nil = True
 //! F(leaf)           = width(leaf) + F(next)            -- fits (w - length s) x
+//! F(multi-line leaf) = width(its first line)          -- its newline is a Line
 //! F(line op)        = width before its newline         -- fits w (i `Line` x) = True
 //! F(GroupStart H)   = min(flat(H) + F(after H), F(first child))
 //!                     (flat side = infinity when H is HAS_HARD: fits _ SFail = False)
@@ -48,6 +49,7 @@
 
 use crate::DigitCount;
 use crate::op::{Doc, FmtOp, GroupHdr};
+use crate::width;
 
 /// A stream the builder refuses (law L8).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +58,16 @@ pub enum BuildError {
     Unbalanced { pc: u32, reason: &'static str },
     /// The stream has more than `u32::MAX - 1` ops (ABI v2 indexes are u32).
     TooLong,
+    /// A byte the op stream carries as an [`AsciiByte`](crate::AsciiByte)
+    /// (`char`, `wrap`'s delimiters, `sep`'s bytes) is not printable ASCII:
+    /// a non-ASCII byte, a tab, a line feed or another control byte
+    /// (LW3.PP-1a).
+    NotAscii { pc: u32, byte: u8 },
+    /// A text leaf holds a tab, whose display width depends on tab stops the
+    /// renderer does not have (LW3.PP-1a).
+    Tab { pc: u32 },
+    /// A `sep` longer than its op holds (8 flat bytes, 4 break bytes).
+    SepTooLong { pc: u32 },
 }
 
 impl std::fmt::Display for BuildError {
@@ -65,6 +77,15 @@ impl std::fmt::Display for BuildError {
                 write!(f, "unbalanced op stream at op {pc}: {reason}")
             }
             BuildError::TooLong => write!(f, "op stream longer than u32::MAX - 1 ops"),
+            BuildError::NotAscii { pc, byte } => write!(
+                f,
+                "op {pc}: byte {byte:#04x} is not printable ASCII (an AsciiByte is 0x20..=0x7E)"
+            ),
+            BuildError::Tab { pc } => write!(f, "op {pc}: a tab in a text leaf"),
+            BuildError::SepTooLong { pc } => write!(
+                f,
+                "op {pc}: a sep longer than 8 flat bytes or 4 break bytes"
+            ),
         }
     }
 }
@@ -85,14 +106,15 @@ enum Frame {
     },
 }
 
-/// The display width of one leaf op (byte length; display columns are
-/// LW3.PP-1's `width.rs`). Line and structural ops are 0 here.
+/// The display width of one single-line leaf op, in columns (`width.rs`,
+/// LW3.PP-1b). A text leaf's width is its first line's; [`multiline`] says
+/// whether the leaf has more. Line and structural ops are 0 here.
 #[inline]
 pub(crate) fn leaf_width(ops: &[FmtOp<'_>], p: usize) -> u64 {
     match &ops[p] {
-        FmtOp::Text(s) => s.len() as u64,
-        FmtOp::OwnedText(s) => s.len() as u64,
-        FmtOp::QuotedText(s) => s.len() as u64 + 2,
+        FmtOp::Text(s) => width::leaf(s).first as u64,
+        FmtOp::OwnedText(s) => width::leaf(s).first as u64,
+        FmtOp::QuotedText(s) => width::quoted(s).first as u64,
         FmtOp::Char(_) => 1,
         FmtOp::I64(v) => v.len() as u64,
         FmtOp::U64(v) => v.len() as u64,
@@ -106,6 +128,18 @@ pub(crate) fn leaf_width(ops: &[FmtOp<'_>], p: usize) -> u64 {
         },
         FmtOp::F64(v) => f64_width(*v) as u64,
         _ => 0,
+    }
+}
+
+/// A text leaf that holds a line feed: its flattening holds a hard line, so
+/// it sets `HAS_HARD` (L2), and the rest a preceding group reads stops at its
+/// first line (L3′).
+#[inline]
+pub(crate) fn multiline(op: &FmtOp<'_>) -> bool {
+    match op {
+        FmtOp::Text(s) | FmtOp::QuotedText(s) => s.as_bytes().contains(&b'\n'),
+        FmtOp::OwnedText(s) => s.as_bytes().contains(&b'\n'),
+        _ => false,
     }
 }
 
@@ -210,7 +244,8 @@ pub(crate) fn compile(mut ops: Vec<FmtOp<'_>>) -> Result<Doc<'_>, BuildError> {
                 Some(Frame::Indent) => {}
                 _ => return unbalanced(pc, "IndentEnd with no matching IndentStart"),
             },
-            FmtOp::Hardline => {
+            // A hard line, or a text leaf with one inside it (LW3.PP-1b).
+            _ if matches!(ops[pc], FmtOp::Hardline) || multiline(&ops[pc]) => {
                 if let Some(&(g, d)) = open.last()
                     && d == brk_depth
                 {
@@ -282,6 +317,13 @@ pub(crate) fn compile(mut ops: Vec<FmtOp<'_>>) -> Result<Doc<'_>, BuildError> {
         let at_root = root[p];
         let next = || chase(p + 1);
         f[p] = match &ops[p] {
+            // A multi-line leaf: `fits` reads its first line, then stops at
+            // its newline ([W] §4 `fits w (i `Line` x) = True`).
+            FmtOp::Text(_) | FmtOp::OwnedText(_) | FmtOp::QuotedText(_)
+                if multiline(&ops[p]) =>
+            {
+                leaf_width(&ops, p)
+            }
             FmtOp::Text(_)
             | FmtOp::OwnedText(_)
             | FmtOp::QuotedText(_)

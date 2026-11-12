@@ -21,6 +21,7 @@ regex = ["dep:regex"]
 [dependencies]
 ryu = "1.0"
 itoap = "1.0.1"
+unicode-width = "0.2"
 pprint_derive = { path = "./derive", version = "0.3.0" }
 regex = { version = "1.11", optional = true }
 

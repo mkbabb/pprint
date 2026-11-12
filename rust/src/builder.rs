@@ -1,6 +1,7 @@
 use crate::layout::{BuildError, compile, f64_width};
-use crate::op::{Doc, FmtOp};
+use crate::op::{AsciiByte, Doc, FmtOp};
 use crate::utils::text_justify;
+use crate::width;
 
 /// Flat-buffer formatting builder. Constructs a [`Doc`]: the `FmtOp` stream
 /// plus its [`GroupHdr`](crate::GroupHdr) table, which `finish()` computes.
@@ -62,11 +63,50 @@ impl<'a> FmtBuilder<'a> {
     }
 
     fn refuse(&mut self, reason: &'static str) {
+        let pc = self.pc();
+        self.refuse_with(BuildError::Unbalanced { pc, reason });
+    }
+
+    fn refuse_with(&mut self, e: BuildError) {
         if self.error.is_none() {
-            self.error = Some(BuildError::Unbalanced {
-                pc: self.ops.len().min(u32::MAX as usize) as u32,
-                reason,
-            });
+            self.error = Some(e);
+        }
+    }
+
+    /// The index the next op takes (saturated into u32 for error reports).
+    fn pc(&self) -> u32 {
+        self.ops.len().min(u32::MAX as usize) as u32
+    }
+
+    /// Add a leaf's display width (LW3.PP-1b) to the running flat width. A
+    /// multi-line leaf adds its last line: its group is `HAS_HARD`, so the
+    /// flat width it lands in is never read for a decision.
+    #[inline]
+    fn add_width(&mut self, w: usize) {
+        let w = u32::try_from(w).unwrap_or(u32::MAX);
+        self.running_width = self.running_width.saturating_add(w);
+    }
+
+    /// The `AsciiByte` for `b`, or a recorded refusal (LW3.PP-1a).
+    fn ascii(&mut self, b: u8) -> AsciiByte {
+        match AsciiByte::new(b) {
+            Some(a) => a,
+            None => {
+                let pc = self.pc();
+                self.refuse_with(BuildError::NotAscii { pc, byte: b });
+                AsciiByte::SPACE
+            }
+        }
+    }
+
+    /// Refuse a text leaf that holds a tab (LW3.PP-1a); true if it is clean.
+    fn tab_free(&mut self, s: &str) -> bool {
+        if s.as_bytes().contains(&b'\t') {
+            let pc = self.pc();
+            self.refuse_with(BuildError::Tab { pc });
+            false
+        } else {
+            true
         }
     }
 
@@ -111,24 +151,31 @@ impl<'a> FmtBuilder<'a> {
     /// Emit borrowed text from the source input.
     #[inline]
     pub fn text(&mut self, s: &'a str) {
-        if s.is_empty() {
+        if s.is_empty() || !self.tab_free(s) {
             return;
         }
-        self.running_width += s.len() as u32;
+        self.add_width(width::leaf(s).last);
         self.ops.push(FmtOp::Text(s));
     }
 
-    /// Emit a single ASCII byte.
+    /// Emit a single printable ASCII byte. Any other byte (non-ASCII, a tab,
+    /// a control byte) is refused: `finish()` returns
+    /// [`BuildError::NotAscii`] (LW3.PP-1a).
     #[inline]
     pub fn char(&mut self, c: u8) {
-        self.running_width += 1;
+        let c = self.ascii(c);
+        self.running_width = self.running_width.saturating_add(1);
         self.ops.push(FmtOp::Char(c));
     }
 
     /// Emit text wrapped in double quotes. Single op fast-path for string values.
     #[inline]
     pub fn quoted_text(&mut self, s: &'a str) {
-        self.running_width += s.len() as u32 + 2; // +2 for quotes
+        if !self.tab_free(s) {
+            return;
+        }
+        // The quotes are counted by `width::quoted`.
+        self.add_width(width::quoted(s).last);
         self.ops.push(FmtOp::QuotedText(s));
     }
 
@@ -136,10 +183,10 @@ impl<'a> FmtBuilder<'a> {
     /// Used for hex formatting, Display fallbacks, and other computed values.
     #[inline]
     pub fn text_owned(&mut self, s: &str) {
-        if s.is_empty() {
+        if s.is_empty() || !self.tab_free(s) {
             return;
         }
-        self.running_width += s.len() as u32;
+        self.add_width(width::leaf(s).last);
         self.ops.push(FmtOp::OwnedText(s.to_string()));
     }
 
@@ -148,8 +195,8 @@ impl<'a> FmtBuilder<'a> {
     /// where structural whitespace is suppressed by `@pretty` hints.
     #[inline]
     pub fn text_inline_ws(&mut self, s: &'a str) {
-        if !s.is_empty() && !s.as_bytes().contains(&b'\n') {
-            self.running_width += s.len() as u32;
+        if !s.is_empty() && !s.as_bytes().contains(&b'\n') && self.tab_free(s) {
+            self.add_width(width::columns(s));
             self.ops.push(FmtOp::Text(s));
         }
     }
@@ -158,10 +205,10 @@ impl<'a> FmtBuilder<'a> {
     /// Caller must ensure the string lives long enough (typically 'static).
     #[inline]
     pub fn str(&mut self, s: &'a str) {
-        if s.is_empty() {
+        if s.is_empty() || !self.tab_free(s) {
             return;
         }
-        self.running_width += s.len() as u32;
+        self.add_width(width::leaf(s).last);
         self.ops.push(FmtOp::Text(s));
     }
 
@@ -170,21 +217,21 @@ impl<'a> FmtBuilder<'a> {
     /// Emit a signed 64-bit integer (rendered inline by the renderer).
     #[inline]
     pub fn i64(&mut self, v: i64) {
-        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.running_width = self.running_width.saturating_add(crate::DigitCount::len(&v) as u32);
         self.ops.push(FmtOp::I64(v));
     }
 
     /// Emit an unsigned 64-bit integer (rendered inline by the renderer).
     #[inline]
     pub fn u64(&mut self, v: u64) {
-        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.running_width = self.running_width.saturating_add(crate::DigitCount::len(&v) as u32);
         self.ops.push(FmtOp::U64(v));
     }
 
     /// Emit a signed 128-bit integer (wide-op: emits two consecutive ops).
     #[inline]
     pub fn i128(&mut self, v: i128) {
-        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.running_width = self.running_width.saturating_add(crate::DigitCount::len(&v) as u32);
         self.ops.push(FmtOp::I128Hi((v >> 64) as u64));
         self.ops.push(FmtOp::I128Lo(v as u64));
     }
@@ -192,7 +239,7 @@ impl<'a> FmtBuilder<'a> {
     /// Emit an unsigned 128-bit integer (wide-op: emits two consecutive ops).
     #[inline]
     pub fn u128(&mut self, v: u128) {
-        self.running_width += crate::DigitCount::len(&v) as u32;
+        self.running_width = self.running_width.saturating_add(crate::DigitCount::len(&v) as u32);
         self.ops.push(FmtOp::U128Hi((v >> 64) as u64));
         self.ops.push(FmtOp::U128Lo(v as u64));
     }
@@ -201,7 +248,7 @@ impl<'a> FmtBuilder<'a> {
     /// width is the exact printed length, so group decisions are exact.
     #[inline]
     pub fn f64(&mut self, v: f64) {
-        self.running_width += f64_width(v) as u32;
+        self.running_width = self.running_width.saturating_add(f64_width(v) as u32);
         self.ops.push(FmtOp::F64(v));
     }
 
@@ -235,7 +282,7 @@ impl<'a> FmtBuilder<'a> {
     /// In break mode: newline + indent. In flat mode: single space.
     #[inline]
     pub fn softline(&mut self) {
-        self.running_width += 1; // flat-mode width = 1 space
+        self.running_width = self.running_width.saturating_add(1); // flat-mode width = 1 space
         self.ops.push(FmtOp::Softline);
     }
 
@@ -311,7 +358,11 @@ impl<'a> FmtBuilder<'a> {
 
     /// Open a wrapped container: group + open delimiter + indent + break_line.
     /// Closure `f` emits the container's items. Automatically patches `flat_width`.
+    ///
+    /// `open` and `close` are printable ASCII bytes; any other byte is
+    /// refused at `finish()` ([`BuildError::NotAscii`], LW3.PP-1a).
     pub fn wrap<F: FnOnce(&mut Self)>(&mut self, open: u8, close: u8, f: F) {
+        let open = self.ascii(open);
         let pos = self.ops.len();
         self.ops.push(FmtOp::WrapStart { open, hdr: 0 });
         let saved_width = self.running_width;
@@ -322,6 +373,7 @@ impl<'a> FmtBuilder<'a> {
             *hdr = flat_width;
         }
         self.running_width = saved_width.saturating_add(flat_width);
+        let close = self.ascii(close);
         self.ops.push(FmtOp::WrapEnd { close });
     }
 
@@ -329,23 +381,33 @@ impl<'a> FmtBuilder<'a> {
     /// Zero-payload fast path — use this for all standard list/struct separators.
     #[inline]
     pub fn comma_sep(&mut self) {
-        self.running_width += 2; // flat-mode width of ", "
+        self.running_width = self.running_width.saturating_add(2); // flat-mode width of ", "
         self.ops.push(FmtOp::CommaSep);
     }
 
     /// Emit a custom separator: in break mode emit `brk` + newline + indent;
     /// in flat mode emit `flat`. For non-comma separators.
     ///
-    /// `flat` max 8 bytes, `brk` max 4 bytes.
+    /// `flat` max 8 bytes, `brk` max 4 bytes, every byte printable ASCII.
+    /// A longer separator is refused at `finish()`
+    /// ([`BuildError::SepTooLong`]), and any other byte too
+    /// ([`BuildError::NotAscii`], LW3.PP-1a).
     #[inline]
     pub fn sep(&mut self, flat: &str, brk: &str) {
-        debug_assert!(flat.len() <= 8, "sep flat must be ≤ 8 bytes");
-        debug_assert!(brk.len() <= 4, "sep brk must be ≤ 4 bytes");
-        let mut flat_buf = [0u8; 8];
-        flat_buf[..flat.len()].copy_from_slice(flat.as_bytes());
-        let mut brk_buf = [0u8; 4];
-        brk_buf[..brk.len()].copy_from_slice(brk.as_bytes());
-        self.running_width += flat.len() as u32; // flat-mode width
+        if flat.len() > 8 || brk.len() > 4 {
+            let pc = self.pc();
+            self.refuse_with(BuildError::SepTooLong { pc });
+            return;
+        }
+        let mut flat_buf = [AsciiByte::SPACE; 8];
+        for (slot, &b) in flat_buf.iter_mut().zip(flat.as_bytes()) {
+            *slot = self.ascii(b);
+        }
+        let mut brk_buf = [AsciiByte::SPACE; 4];
+        for (slot, &b) in brk_buf.iter_mut().zip(brk.as_bytes()) {
+            *slot = self.ascii(b);
+        }
+        self.running_width = self.running_width.saturating_add(flat.len() as u32); // flat-mode width
         self.ops.push(FmtOp::Sep {
             flat: flat_buf,
             flat_len: flat.len() as u8,
@@ -460,7 +522,7 @@ impl<'a> FmtBuilder<'a> {
             let start_pos = self.ops.len();
             item_starts.push(start_pos);
             emit_item(self, item);
-            let item_width = (self.running_width - start_width) as usize;
+            let item_width = self.running_width.saturating_sub(start_width) as usize;
             item_widths.push(item_width);
         }
 

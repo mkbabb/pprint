@@ -1,4 +1,5 @@
-use crate::op::{Doc, FmtOp, GroupHdr};
+use crate::op::{AsciiByte, Doc, FmtOp, GroupHdr};
+use crate::width;
 
 /// Printer configuration.
 #[derive(Debug, Clone, Copy)]
@@ -31,103 +32,120 @@ impl Printer {
     }
 }
 
-/// Linear-scan renderer. One forward pass over the op stream, O(n) time,
-/// no allocation beyond the output buffer and the indent run.
+/// Linear-scan renderer. One forward loop over the op stream, O(n) time, no
+/// recursion, no allocation beyond the output buffer, the indent run and two
+/// stacks that grow with nesting depth (sk-v27 LW3.PP-1a).
 ///
 /// A group decision is O(1): flat if and only if the group is not
 /// `HAS_HARD` and `column + flat_width + trailing <= max_width`, with both
 /// widths precomputed by `FmtBuilder::finish()` ([W] §4 `better`/`fits` with
 /// the rest lookahead; laws L1–L3′). Inside a flat group every nested group
-/// is flat ([W] §3 `flatten (x :<|> y) = flatten x`).
+/// is flat ([W] §3 `flatten (x :<|> y) = flatten x`), at any depth: the mode
+/// stack is a growable bit vector with no depth cliff.
+///
+/// The output is built only from `&str` and [`AsciiByte`] pushes, so it is
+/// valid UTF-8 by construction, with no unchecked conversion.
+///
+/// [`AsciiByte`]: crate::AsciiByte
 pub fn render(doc: &Doc<'_>, printer: Printer) -> String {
     render_with_hint(doc, printer, 0)
 }
 
 /// Like `render`, but with a size hint for the output buffer.
 pub fn render_with_hint(doc: &Doc<'_>, printer: Printer, size_hint: usize) -> String {
-    let indent_ch = if printer.use_tabs { b'\t' } else { b' ' };
+    let indent_ch = if printer.use_tabs { '\t' } else { ' ' };
 
     // Pre-size output buffer from root op's flat_width or size hint.
     let capacity = if size_hint > 0 {
         size_hint
     } else {
         match doc.ops.first() {
-            Some(FmtOp::WrapStart { hdr, .. } | FmtOp::GroupStart { hdr }) => {
-                (doc.hdrs[*hdr as usize].flat_width as usize)
-                    .saturating_mul(2)
-                    .clamp(256, 1 << 20)
-            }
-            _ => doc.ops.len() * 4,
+            Some(FmtOp::WrapStart { hdr, .. } | FmtOp::GroupStart { hdr }) => doc
+                .hdrs
+                .get(*hdr as usize)
+                .map_or(256, |h| (h.flat_width as usize).saturating_mul(2))
+                .clamp(256, 1 << 20),
+            _ => doc.ops.len().saturating_mul(4),
         }
     };
 
     let mut state = RenderState {
-        output: Vec::with_capacity(capacity),
-        group_bits: 0,
-        group_depth: 0,
+        output: String::with_capacity(capacity),
+        modes: ModeStack::default(),
         indent: 0,
         current_line_len: 0,
         // ABI v2: widths are u32, and `max_width` is clamped to u32::MAX / 2.
         max_width: printer.max_width.min(u32::MAX as usize / 2),
         indent_size: printer.indent,
         indent_ch,
-        indent_cache: vec![indent_ch; 128],
+        indent_cache: String::new(),
     };
 
-    state.run(&doc.ops, &doc.hdrs, 0, doc.ops.len());
+    state.run(&doc.ops, &doc.hdrs);
 
     // Strip trailing whitespace.
-    while state
-        .output
-        .last()
-        .is_some_and(|&b| b == b' ' || b == b'\t')
-    {
-        state.output.pop();
+    state.trim_trailing();
+    state.output
+}
+
+/// The group mode stack: bit `d` is set iff the group at depth `d` (0-based)
+/// is in break mode. A growable bit vector, so no nesting depth reads a
+/// wrong mode (L1 at any depth; the u64 stack of LW2 read every group past
+/// depth 64 as broken).
+#[derive(Default)]
+struct ModeStack {
+    words: Vec<u64>,
+    depth: usize,
+}
+
+impl ModeStack {
+    #[inline(always)]
+    fn push(&mut self, breaks: bool) {
+        let (w, b) = (self.depth / 64, self.depth % 64);
+        if w == self.words.len() {
+            self.words.push(0);
+        }
+        let mask = 1u64 << b;
+        if breaks {
+            self.words[w] |= mask;
+        } else {
+            self.words[w] &= !mask;
+        }
+        self.depth += 1;
     }
 
-    // SAFETY: all ops emit valid UTF-8 (Text borrows &str, Char emits ASCII,
-    // numeric ops produce ASCII digits).
-    unsafe { String::from_utf8_unchecked(state.output) }
+    #[inline(always)]
+    fn pop(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+    }
+
+    /// The innermost group's mode; false at depth 0 (pprint's convention:
+    /// lines outside every group are flat).
+    #[inline(always)]
+    fn in_break(&self) -> bool {
+        match self.depth.checked_sub(1) {
+            None => false,
+            Some(d) => (self.words[d / 64] >> (d % 64)) & 1 == 1,
+        }
+    }
 }
 
 struct RenderState {
-    output: Vec<u8>,
-    /// Bitfield group stack: bit N = break mode at depth N. Supports 64 nesting levels.
-    group_bits: u64,
-    group_depth: u32,
+    output: String,
+    modes: ModeStack,
     indent: usize,
     current_line_len: usize,
     max_width: usize,
     indent_size: usize,
-    indent_ch: u8,
-    indent_cache: Vec<u8>,
+    indent_ch: char,
+    /// A run of `indent_ch`, grown on demand; a newline copies a prefix.
+    indent_cache: String,
 }
 
 impl RenderState {
     #[inline(always)]
     fn in_break_mode(&self) -> bool {
-        if self.group_depth == 0 {
-            return false;
-        }
-        // Beyond 64 levels: conservatively assume break mode.
-        if self.group_depth > 64 {
-            return true;
-        }
-        (self.group_bits >> (self.group_depth - 1)) & 1 == 1
-    }
-
-    #[inline(always)]
-    fn push_group(&mut self, breaks: bool) {
-        if self.group_depth < 64 {
-            let bit = (breaks as u64) << self.group_depth;
-            self.group_bits = (self.group_bits & !(1u64 << self.group_depth)) | bit;
-        }
-        self.group_depth += 1;
-    }
-
-    #[inline(always)]
-    fn pop_group(&mut self) {
-        self.group_depth = self.group_depth.saturating_sub(1);
+        self.modes.in_break()
     }
 
     /// L1/L2/L3′: does the group with header `h` break here? A group nested
@@ -135,7 +153,7 @@ impl RenderState {
     /// it breaks unless its flattening fits with its trailing rest.
     #[inline(always)]
     fn decide(&self, h: &GroupHdr) -> bool {
-        if self.group_depth > 0 && !self.in_break_mode() {
+        if self.modes.depth > 0 && !self.in_break_mode() {
             return false;
         }
         h.has_hard()
@@ -143,46 +161,106 @@ impl RenderState {
                 > self.max_width as u64
     }
 
+    /// Emit a text leaf, counting display columns (LW3.PP-1b). Each line
+    /// feed inside the leaf is a newline at column 0: trailing spaces before
+    /// it are removed, as before every newline, and no indentation follows
+    /// it. The column after the leaf is its last line's width.
     #[inline(always)]
-    fn text(&mut self, s: &[u8]) {
-        self.output.extend_from_slice(s);
+    fn text(&mut self, s: &str) {
+        if !s.as_bytes().contains(&b'\n') {
+            self.output.push_str(s);
+            self.current_line_len += width::columns(s);
+            return;
+        }
+        for (i, line) in s.split('\n').enumerate() {
+            if i > 0 {
+                self.trim_trailing();
+                self.output.push('\n');
+                self.current_line_len = 0;
+            }
+            self.output.push_str(line);
+            self.current_line_len += width::columns(line);
+        }
+    }
+
+    /// An ASCII-only string (numbers, fixed separators): one column a byte.
+    #[inline(always)]
+    fn ascii_str(&mut self, s: &str) {
+        debug_assert!(s.is_ascii());
+        self.output.push_str(s);
         self.current_line_len += s.len();
     }
 
     #[inline(always)]
+    fn ascii(&mut self, c: AsciiByte) {
+        self.output.push(c.as_char());
+        self.current_line_len += 1;
+    }
+
+    #[inline(always)]
+    fn ascii_run(&mut self, bytes: &[AsciiByte]) {
+        for &c in bytes {
+            self.output.push(c.as_char());
+        }
+        self.current_line_len += bytes.len();
+    }
+
+    /// Remove trailing spaces and tabs from the output (pprint's convention,
+    /// before every newline and at the end).
+    #[inline(always)]
+    fn trim_trailing(&mut self) {
+        let keep = self.output.trim_end_matches([' ', '\t']).len();
+        self.output.truncate(keep);
+    }
+
+    #[inline(always)]
     fn newline(&mut self) {
-        // Strip trailing whitespace before the break.
-        while self.output.last().is_some_and(|&b| b == b' ' || b == b'\t') {
-            self.output.pop();
-        }
-        self.output.push(b'\n');
-        // Emit indent from cache (single extend_from_slice instead of per-byte push).
+        self.trim_trailing();
+        self.output.push('\n');
+        // Emit indent from cache (one push_str instead of per-char pushes).
+        // `indent_ch` is one byte, so a byte prefix of the run is a char
+        // boundary.
         if self.indent > self.indent_cache.len() {
-            self.indent_cache.resize(self.indent, self.indent_ch);
+            let grow = self.indent - self.indent_cache.len();
+            self.indent_cache
+                .extend(std::iter::repeat_n(self.indent_ch, grow));
         }
-        self.output
-            .extend_from_slice(&self.indent_cache[..self.indent]);
+        self.output.push_str(&self.indent_cache[..self.indent]);
         self.current_line_len = self.indent;
     }
 
-    /// Render `ops[lo..hi]`. An `IfBreak` renders the branch its mode takes
-    /// (law L6) by recursing on that branch's range.
-    fn run(&mut self, ops: &[FmtOp<'_>], hdrs: &[GroupHdr], lo: usize, hi: usize) {
-        let mut pc = lo;
-        while pc < hi {
-            match ops[pc] {
-                FmtOp::Text(s) => self.text(s.as_bytes()),
-                FmtOp::OwnedText(ref s) => self.text(s.as_bytes()),
-                FmtOp::QuotedText(s) => {
-                    self.output.push(b'"');
-                    self.output.extend_from_slice(s.as_bytes());
-                    self.output.push(b'"');
-                    self.current_line_len += s.len() + 2;
+    /// Render the whole op stream in one loop. An `IfBreak` renders the
+    /// branch its mode takes (law L6): the loop jumps into that branch and
+    /// records, on an explicit stack, where the branch ends and where the
+    /// stream resumes after the whole `IfBreak`. No recursion, so any nesting
+    /// depth renders at a constant native stack.
+    fn run(&mut self, ops: &[FmtOp<'_>], hdrs: &[GroupHdr]) {
+        // Open IfBreak branches, innermost last: (branch end, resume pc).
+        let mut branches: Vec<(usize, usize)> = Vec::new();
+        let mut pc = 0usize;
+        loop {
+            // Leave every branch that ends here.
+            while let Some(&(end, resume)) = branches.last() {
+                if pc < end {
+                    break;
                 }
-                FmtOp::Char(c) => {
-                    self.output.push(c);
+                branches.pop();
+                pc = resume;
+            }
+            let Some(op) = ops.get(pc) else {
+                break;
+            };
+            match *op {
+                FmtOp::Text(s) => self.text(s),
+                FmtOp::OwnedText(ref s) => self.text(s),
+                FmtOp::QuotedText(s) => {
+                    self.output.push('"');
+                    self.current_line_len += 1;
+                    self.text(s);
+                    self.output.push('"');
                     self.current_line_len += 1;
                 }
+                FmtOp::Char(c) => self.ascii(c),
 
                 FmtOp::I64(v) => emit_int(v, self),
                 FmtOp::U64(v) => emit_int(v, self),
@@ -207,9 +285,9 @@ impl RenderState {
 
                 FmtOp::GroupStart { hdr } => {
                     let breaks = self.decide(&hdrs[hdr as usize]);
-                    self.push_group(breaks);
+                    self.modes.push(breaks);
                 }
-                FmtOp::GroupEnd => self.pop_group(),
+                FmtOp::GroupEnd => self.modes.pop(),
 
                 FmtOp::IndentStart => self.indent += self.indent_size,
                 FmtOp::IndentEnd => {
@@ -218,9 +296,8 @@ impl RenderState {
 
                 FmtOp::WrapStart { open, hdr } => {
                     let breaks = self.decide(&hdrs[hdr as usize]);
-                    self.push_group(breaks);
-                    self.output.push(open);
-                    self.current_line_len += 1;
+                    self.modes.push(breaks);
+                    self.ascii(open);
                     self.indent += self.indent_size;
                     if breaks {
                         self.newline();
@@ -231,9 +308,8 @@ impl RenderState {
                     if self.in_break_mode() {
                         self.newline();
                     }
-                    self.output.push(close);
-                    self.current_line_len += 1;
-                    self.pop_group();
+                    self.ascii(close);
+                    self.modes.pop();
                 }
 
                 FmtOp::Hardline => self.newline(),
@@ -241,7 +317,7 @@ impl RenderState {
                     if self.in_break_mode() {
                         self.newline();
                     } else {
-                        self.output.push(b' ');
+                        self.output.push(' ');
                         self.current_line_len += 1;
                     }
                 }
@@ -252,24 +328,24 @@ impl RenderState {
                 }
                 FmtOp::CommaSep => {
                     if self.in_break_mode() {
-                        self.output.push(b',');
+                        self.output.push(',');
                         self.current_line_len += 1;
                         self.newline();
                     } else {
-                        self.text(b", ");
+                        self.ascii_str(", ");
                     }
                 }
                 FmtOp::Sep {
-                    flat,
+                    ref flat,
                     flat_len,
-                    brk,
+                    ref brk,
                     brk_len,
                 } => {
                     if self.in_break_mode() {
-                        self.text(&brk[..brk_len as usize]);
+                        self.ascii_run(&brk[..(brk_len as usize).min(brk.len())]);
                         self.newline();
                     } else {
-                        self.text(&flat[..flat_len as usize]);
+                        self.ascii_run(&flat[..(flat_len as usize).min(flat.len())]);
                     }
                 }
 
@@ -279,12 +355,13 @@ impl RenderState {
                 } => {
                     let flat_start = pc + 1 + break_count as usize;
                     let rest = flat_start + flat_count as usize;
-                    if self.in_break_mode() {
-                        self.run(ops, hdrs, pc + 1, flat_start);
+                    let (lo, hi) = if self.in_break_mode() {
+                        (pc + 1, flat_start)
                     } else {
-                        self.run(ops, hdrs, flat_start, rest);
-                    }
-                    pc = rest;
+                        (flat_start, rest)
+                    };
+                    branches.push((hi, rest));
+                    pc = lo;
                     continue;
                 }
             }
@@ -296,12 +373,12 @@ impl RenderState {
 #[inline(always)]
 fn emit_int<T: itoap::Integer>(value: T, state: &mut RenderState) {
     let prev_len = state.output.len();
-    itoap::write_to_vec(&mut state.output, value);
+    itoap::write_to_string(&mut state.output, value);
     state.current_line_len += state.output.len() - prev_len;
 }
 
 #[inline(always)]
 fn emit_f64(value: f64, state: &mut RenderState) {
     let mut buf = ryu::Buffer::new();
-    state.text(buf.format_finite(value).as_bytes());
+    state.ascii_str(buf.format_finite(value));
 }

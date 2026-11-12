@@ -10,7 +10,7 @@
 //! newline. Inside a group, the group's own `[W] §3 group` union decides.
 
 use super::*;
-use pprint::{FmtOp, Printer};
+use pprint::{AsciiByte, FmtOp, Printer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LowerError {
@@ -19,17 +19,13 @@ pub enum LowerError {
     Unbalanced(&'static str),
     /// A wide op without its partner.
     WideOp,
-    /// A leaf with a newline byte. v1 gives it no law (its width is the byte
-    /// length, and it does not force a break); ABI v2 (LW2.PP-1) defines it
-    /// as last-line width plus `HAS_HARD`. Until then: no lowering.
-    MultilineLeaf,
 }
 
 enum Frame {
     Root,
     Group,
     Indent,
-    Wrap { open: u8, close_seen: bool },
+    Wrap { open: AsciiByte, close_seen: bool },
 }
 
 struct Level {
@@ -44,10 +40,10 @@ fn seq(parts: Vec<D>) -> D {
     })
 }
 
-fn byte_text(bytes: &[u8]) -> D {
-    // Sep / Wrap / Char bytes are ASCII in every v1 producer; a non-ASCII
-    // byte is the PP-U1 soundness hole, rendered here lossily on purpose.
-    text(&String::from_utf8_lossy(bytes))
+fn byte_text(bytes: &[AsciiByte]) -> D {
+    // Sep / Wrap / Char bytes are `AsciiByte`s (LW3.PP-1a): printable ASCII,
+    // one `Char` each in [W]'s `length`.
+    text(&bytes.iter().map(|b| b.as_char()).collect::<String>())
 }
 
 /// Lower a v1 op stream to an oracle document under `printer`.
@@ -66,13 +62,11 @@ fn lower_range(ops: &[FmtOp<'_>], printer: Printer, base_depth: usize) -> Result
     while pc < ops.len() {
         let flat_ctx = group_depth == 0;
         let leaf: Option<D> = match &ops[pc] {
-            FmtOp::Text(s) | FmtOp::QuotedText(s) if s.contains('\n') => {
-                return Err(LowerError::MultilineLeaf);
-            }
-            FmtOp::OwnedText(s) if s.contains('\n') => return Err(LowerError::MultilineLeaf),
-            FmtOp::Text(s) => Some(text(s)),
-            FmtOp::OwnedText(s) => Some(text(s)),
-            FmtOp::QuotedText(s) => Some(text(&format!("\"{s}\""))),
+            // A leaf's line feeds are hard lines at column 0 (LW3.PP-1b,
+            // `leaf_text`): the last line's width, and `HAS_HARD`.
+            FmtOp::Text(s) => Some(leaf_text(s)),
+            FmtOp::OwnedText(s) => Some(leaf_text(s)),
+            FmtOp::QuotedText(s) => Some(leaf_text(&format!("\"{s}\""))),
             FmtOp::Char(c) => Some(byte_text(&[*c])),
             FmtOp::I64(v) => Some(text(&v.to_string())),
             FmtOp::U64(v) => Some(text(&v.to_string())),
