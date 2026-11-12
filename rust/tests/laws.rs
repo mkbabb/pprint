@@ -80,6 +80,10 @@ enum G {
     Indent(Vec<G>),
     Wrap(u8, u8, Vec<G>),
     IfBreak(Vec<G>, Vec<G>),
+    /// L9 (LW3.PP-2): a line suffix holding one word.
+    Suffix(&'static str),
+    Boundary,
+    BreakParent,
 }
 
 fn emit(b: &mut FmtBuilder<'static>, g: &G) {
@@ -100,6 +104,9 @@ fn emit(b: &mut FmtBuilder<'static>, g: &G) {
             |b| t.iter().for_each(|x| emit(b, x)),
             |b| e.iter().for_each(|x| emit(b, x)),
         ),
+        G::Suffix(s) => b.line_suffix(|b| b.text(s)),
+        G::Boundary => b.line_suffix_boundary(),
+        G::BreakParent => b.break_parent(),
     }
 }
 
@@ -120,6 +127,8 @@ struct Mix {
     if_break: u64,
     fill: u64,
     sep: u64,
+    /// L9 (LW3.PP-2): suffixes, boundaries and break-parents.
+    trivia: u64,
 }
 
 impl Mix {
@@ -131,6 +140,7 @@ impl Mix {
         if_break: 1,
         fill: 1,
         sep: 1,
+        trivia: 0,
     };
 }
 
@@ -149,6 +159,7 @@ fn gen_one(r: &mut Rng, m: Mix, depth: u32) -> G {
         m.hard,
         m.fill,
         m.sep,
+        m.trivia,
         s(m.group),
         s(m.indent),
         s(m.wrap),
@@ -178,9 +189,14 @@ fn gen_one(r: &mut Rng, m: Mix, depth: u32) -> G {
         2 => G::Hardline,
         3 => G::FillSep([" ", ", ", ""][r.below(3) as usize]),
         4 => G::Sep,
-        5 => G::Group(gen_seq(r, m, d, 4)),
-        6 => G::Indent(gen_seq(r, m, d, 3)),
-        7 => {
+        5 => match r.below(4) {
+            0 | 1 => G::Suffix([" //c", " #d", " /*e*/"][r.below(3) as usize]),
+            2 => G::Boundary,
+            _ => G::BreakParent,
+        },
+        6 => G::Group(gen_seq(r, m, d, 4)),
+        7 => G::Indent(gen_seq(r, m, d, 3)),
+        8 => {
             let (o, c) = [(b'[', b']'), (b'{', b'}'), (b'(', b')')][r.below(3) as usize];
             G::Wrap(o, c, gen_seq(r, m, d, 4))
         }
@@ -259,6 +275,7 @@ fn l1_group_flat_iff_fits() {
         fill: 0,
         sep: 0,
         hard: 0,
+        trivia: 0,
     };
     run_law(0x11_0001, m, false, "L1");
 }
@@ -306,6 +323,7 @@ fn l3_rest_lookahead() {
         if_break: 2,
         fill: 2,
         sep: 1,
+        trivia: 0,
     };
     let mut r = Rng(0x13_0003);
     let mut cells = 0;
@@ -561,6 +579,56 @@ fn l7_iii_oracle_at_every_width() {
     eprintln!("L7(iii): {cells} cells, 0 divergences");
 }
 
+// ── L9 (LW3.PP-2) ───────────────────────────────────────────────────────────
+
+/// L9 in G2: every construct mixed with suffixes, boundaries and
+/// break-parents (the trivia generators), rendered against the oracle
+/// through the op-stream lowering (`lower.rs`), which maps `LineSuffix`,
+/// `LineSuffixBoundary` and `BreakParent` to the oracle's L9 extension of
+/// `be` and `FillSep` to [L] `softline`.
+#[test]
+fn l9_trivia_in_the_g2_generator() {
+    let m = Mix {
+        hard: 1,
+        fill: 2,
+        trivia: 4,
+        ..Mix::BASE
+    };
+    run_law(0x19_0002, m, false, "L9 (G2)");
+}
+
+/// L3′ with trivia in the trailing region: a group, then a rest that holds
+/// suffixes, boundaries, fill separators and later groups (the pending
+/// state changes what `fits` reads, so `trailing` and `cut` are per state).
+#[test]
+fn l9_l3_rest_lookahead_with_trivia() {
+    let m = Mix {
+        hard: 1,
+        group: 6,
+        indent: 1,
+        wrap: 1,
+        if_break: 2,
+        fill: 2,
+        sep: 1,
+        trivia: 4,
+    };
+    let mut r = Rng(0x19_0003);
+    let mut cells = 0;
+    while cells < cases() {
+        let mut gs = gen_seq(&mut r, m, 1, 3);
+        gs.push(G::Group(gen_seq(&mut r, m, 2, 4)));
+        gs.extend(gen_seq(&mut r, m, 2, 4));
+        let gs = if r.chance(1, 2) {
+            vec![G::Group(gs)]
+        } else {
+            gs
+        };
+        let ws = widths(&mut r, 4);
+        cells += agree(&gs, &ws, "L9 L3'");
+    }
+    eprintln!("L9 L3': {cells} cells, 0 divergences");
+}
+
 // ── L8 ──────────────────────────────────────────────────────────────────────
 
 /// L8, total: no panic on any call sequence. `finish()` either refuses
@@ -604,7 +672,7 @@ fn raw_calls(
     depth: u32,
 ) {
     for _ in 0..1 + r.below(10) {
-        match r.below(if depth == 0 { 14 } else { 16 }) {
+        match r.below(if depth == 0 { 14 } else { 19 }) {
             0 | 1 => b.text(WORDS[r.below(6) as usize]),
             2 => b.softline(),
             3 => b.hardline(),
@@ -627,6 +695,14 @@ fn raw_calls(
             }
             13 => b.f64(r.below(1000) as f64 / 7.0),
             14 => b.wrap(b'[', b']', |b| raw_calls(r, b, cps, lcps, depth - 1)),
+            // L9's ops (LW3.PP-2): a suffix holding arbitrary calls (a
+            // non-leaf is refused), a boundary, a break-parent.
+            16 => {
+                let s = r.next();
+                b.line_suffix(|b| raw_calls(&mut Rng(s), b, &mut Vec::new(), &mut Vec::new(), depth - 1))
+            }
+            17 => b.line_suffix_boundary(),
+            18 => b.break_parent(),
             _ => {
                 let mut t = Vec::new();
                 let mut e = Vec::new();

@@ -29,6 +29,7 @@ regex = { version = "1.11", optional = true }
 rand = "0.8"
 pretty = "0.12"
 divan = "0.1"
+sha2 = "0.10"
 
 [[bench]]
 name = "pprint"

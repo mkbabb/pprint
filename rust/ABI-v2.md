@@ -88,3 +88,36 @@ The renderer is one loop: an `IfBreak` pushes (branch end, resume) on an explici
 **Display width (LW3.PP-1b, no layout change).** Every width in the stream's semantics (`GroupHdr.flat_width`, `GroupHdr.trailing`, the renderer's column) is display columns, measured by `src/width.rs` (`unicode-width`, UAX #11), never bytes. A text leaf with a line feed is multi-line: it sets `HAS_HARD`, `trailing` stops at its first line, and the column after it is its last line's width; its newline starts the next line at column 0.
 
 `ABI-v2.sha256` is re-taken for `src/op.rs` and this file.
+
+### The LW3 addendum, continued: fill and trivia (LW3.PP-2, rulings S8-A and S8-B)
+
+PP-2 extends the one LW3 op.rs addendum with four ops. `FmtOp<'a>` stays ≤ 24 bytes with alignment 8 (the asserts are kept and pass); `GroupHdr` grows from 16 to 28 bytes, alignment 4 (`const _: () = assert!(size_of::<GroupHdr>() == 28)`).
+
+| Variant | Payload | Bytes | Law |
+|---|---|---|---|
+| `FillSep { hdr: u32, spaces: u32 }` | header index, flat spaces | 8 | L5, L3′(c) |
+| `LineSuffix { len: u32 }` | content op count | 4 | L9 |
+| `LineSuffixBoundary` | — | 0 | L9 |
+| `BreakParent` | — | 0 | L2 |
+
+**`FillSep` (ruling S8-B).** `FillSep { spaces: k }` is Leijen's composition, `group (flatAlt linebreak (text (spaces k)))`; for `k = 1` that is [L] `softline = group line`, so `fillSep = fold (</>)` with `x </> y = x <> softline <> y` is a `FillSep` between items. It is a one-op group: it takes a `GroupHdr` (`flat_width = k`, `end_pc` = its own index, flag `FILL`) and decides itself at render time like a group (flat inside a flat group; elsewhere flat iff `col + k + trailing ≤ w`). Its broken side is a newline, so the trailing of anything before it stops there (L3′(c)). `FmtBuilder::fill_sep(sep)` is `text (sep without its trailing spaces)` then `FillSep { spaces: their count }`; the composition it replaces (`group (if_break (break_line) (text ws))`) renders byte-equal (`tests/pp2_trivia.rs`).
+
+**L3′ (ruling S8-A).** [W] §4 governs L3′: `trailing` is what `fits` reads of the rest, with every later group resolved by its own `better`, not the later group's flat width. The pinned case `l3_later_group_counts_to_its_first_line_not_its_flat_width` stays a law. The design's L3′ text ("lines in later groups without `HAS_HARD` count at flat width") reads as this.
+
+**Trivia (L9).** `LineSuffix { len }`: the next `len` ops are its content, leaves only (`Text`, `OwnedText`, `QuotedText`, `Char`, the numeric leaves; `finish()` refuses anything else with the new `BuildError::SuffixContent { pc }`, and a range past its region). The content is held back and emitted just before the next structural newline (a line op in break mode, a hard line, a boundary), or at the end of the document, and counts as zero width; a line feed inside a leaf is not a structural newline. `LineSuffixBoundary`: a hard line if a suffix is pending, otherwise nothing. `BreakParent`: no output; it marks its group `HAS_HARD`, which propagates as a hard line does (not across an `IfBreak` break branch). Blank lines: a structural newline that would make a second blank line in a row is dropped (its indentation stays); a line feed inside a leaf is never dropped.
+
+**`GroupHdr` under the pending state.** A boundary makes `fits`'s reading depend on whether a suffix is pending, so the header carries both cases:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `flat_width` | u32 | as before |
+| `trailing` | u32 | the rest after the group ([W] §4 `fits`), with no suffix pending after it |
+| `trailing_pending` | u32 | the same, with a suffix pending after it |
+| `cut` | u32 | no suffix pending at the open: the flat width up to the first boundary that a suffix inside the group makes a newline; `NO_CUT` (`u32::MAX`) if none |
+| `cut_pending` | u32 | a suffix pending at the open: the flat width up to the first boundary; `NO_CUT` if none |
+| `end_pc` | u32 | as before; a `FillSep`'s own index |
+| `flags` | u32 | bit 0 `HAS_HARD`, bit 1 `WRAP`, bit 2 `FILL`, bit 3 `SUFFIX` (the flattening holds a suffix, so one is pending after the group) |
+
+The decision stays O(1): with `π` the renderer's pending state, a group that is not `HAS_HARD` is flat iff `col + need ≤ w`, where `need` is `cut_π` when it is not `NO_CUT`, and otherwise `flat_width + trailing_π'` with `π' = π or SUFFIX`. `src/layout.rs` derives the recurrences (`F_π`, the flat reading `g_π`) from [W] §4 with the L9 extension of `be`, and the oracle (`tests/oracle/`, which reads no header) is the check: `tests/pp2_trivia.rs` and the trivia generators of `tests/laws.rs` (L9, L3′ with trivia) at ≥ 10⁵ cells each.
+
+`ABI-v2.sha256` is re-taken for `src/op.rs` and this file. The versioned stream encoding of these ops is `STREAM-v1.md` (LW3.PP-3a).

@@ -103,6 +103,29 @@ pub enum FmtOp<'a> {
     /// `flat_count`; in flat mode skip `break_count` ops, then emit
     /// `flat_count` (law L6). Counts are u32 (ABI v2).
     IfBreak { break_count: u32, flat_count: u32 },
+
+    // ── Fill and trivia (sk-v27 LW3.PP-2, `ABI-v2.md` LW3 addendum) ─────
+    /// A fill separator, [L] `softline = group line` generalized to `k =
+    /// spaces` spaces: `group (flatAlt linebreak (text (spaces k)))` (law
+    /// L5, ruling S8-B). `hdr` indexes the [`GroupHdr`] table like a
+    /// group's, with `flat_width = spaces`; the separator decides itself at
+    /// render time, so the trailing of the item before it stops here
+    /// (L3′(c)).
+    FillSep { hdr: u32, spaces: u32 },
+
+    /// A line suffix (law L9): the next `len` ops (leaves only) are held
+    /// back and emitted just before the next structural newline, or at the
+    /// end of the document. They count as zero width.
+    LineSuffix { len: u32 },
+
+    /// If a line suffix is pending, a hard line that flushes it (L9);
+    /// otherwise nothing.
+    LineSuffixBoundary,
+
+    /// No output; forces the enclosing group and every group around it to
+    /// break, like a hard line, except across an `IfBreak` break branch
+    /// (law L2).
+    BreakParent,
 }
 
 /// A printable ASCII byte, `0x20..=0x7E` (sk-v27 LW3.PP-1a, `ABI-v2.md`
@@ -165,28 +188,55 @@ const _: () = assert!(std::mem::size_of::<AsciiByte>() == 1);
 const _: () = assert!(std::mem::size_of::<FmtOp<'static>>() <= 24);
 const _: () = assert!(std::mem::align_of::<FmtOp<'static>>() == 8);
 
-/// Per-group metadata, one entry per `GroupStart`/`WrapStart`, in op order.
-/// All fields are u32 (ABI v2): a group wider than 65,535 columns is exact.
+/// Per-group metadata, one entry per `GroupStart`/`WrapStart`/`FillSep`, in
+/// op order. All fields are u32 (ABI v2): a group wider than 65,535 columns
+/// is exact.
+///
+/// The decision reads the pending-suffix state `π` (law L9): a
+/// `LineSuffixBoundary` with a suffix pending is a newline, so the width
+/// `fits` reads depends on whether a suffix is pending when the group opens.
+/// `cut` and `cut_pending` give the width up to the first such boundary in
+/// the group's flattening (`NO_CUT` if none); `trailing` and
+/// `trailing_pending` give the rest after the group under each state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupHdr {
     /// Width of the group's flattened content ([W] §3 `flatten`), saturated
     /// at `u32::MAX`. Meaningless when `HAS_HARD` is set.
     pub flat_width: u32,
     /// Width of the rest after the group up to the end of its first line,
-    /// as [W] §4 `fits` reads it (law L3′), saturated at `u32::MAX`.
+    /// as [W] §4 `fits` reads it (law L3′), with no suffix pending after the
+    /// group; saturated at `u32::MAX`.
     pub trailing: u32,
-    /// Index of the group's closing op (`GroupEnd` or `WrapEnd`).
+    /// As `trailing`, with a suffix pending after the group (L9).
+    pub trailing_pending: u32,
+    /// With no suffix pending at the open: the flat width up to the first
+    /// `LineSuffixBoundary` of the flattening that a suffix inside the
+    /// group makes a newline, or [`GroupHdr::NO_CUT`].
+    pub cut: u32,
+    /// With a suffix pending at the open: the flat width up to the first
+    /// `LineSuffixBoundary` of the flattening, or [`GroupHdr::NO_CUT`].
+    pub cut_pending: u32,
+    /// Index of the group's closing op (`GroupEnd` or `WrapEnd`; the op
+    /// itself for a `FillSep`).
     pub end_pc: u32,
-    /// `HAS_HARD`, `WRAP`.
+    /// `HAS_HARD`, `WRAP`, `FILL`, `SUFFIX`.
     pub flags: u32,
 }
 
 impl GroupHdr {
-    /// The group's flattening contains a hard line, so it can never be flat
-    /// (law L2: `flatten hardline = Fail`, `fits _ SFail = False`).
+    /// The group's flattening contains a hard line (a `Hardline`, a
+    /// multi-line leaf or a `BreakParent`), so it can never be flat (law L2:
+    /// `flatten hardline = Fail`; [P] `group` of a never-flat document).
     pub const HAS_HARD: u32 = 1 << 0;
     /// The header belongs to a `WrapStart`.
     pub const WRAP: u32 = 1 << 1;
+    /// The header belongs to a `FillSep`.
+    pub const FILL: u32 = 1 << 2;
+    /// The group's flattening holds a `LineSuffix` (and no boundary that
+    /// it would turn into a newline), so a suffix is pending after it.
+    pub const SUFFIX: u32 = 1 << 3;
+    /// No boundary cuts the flattening.
+    pub const NO_CUT: u32 = u32::MAX;
 
     #[inline(always)]
     pub fn has_hard(&self) -> bool {
@@ -194,7 +244,8 @@ impl GroupHdr {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<GroupHdr>() == 16);
+const _: () = assert!(std::mem::size_of::<GroupHdr>() == 28);
+const _: () = assert!(std::mem::align_of::<GroupHdr>() == 4);
 
 /// A finished document: the op stream and its group-header table. Built once
 /// by [`FmtBuilder::finish`](crate::FmtBuilder::finish), rendered any number

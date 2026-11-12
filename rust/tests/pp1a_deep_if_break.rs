@@ -29,6 +29,9 @@ fn if_break_nest_10_6_in_break_mode() {
     let hdrs = vec![GroupHdr {
         flat_width: 0,
         trailing: 0,
+        trailing_pending: 0,
+        cut: GroupHdr::NO_CUT,
+        cut_pending: GroupHdr::NO_CUT,
         end_pc: (N + 2) as u32,
         flags: GroupHdr::HAS_HARD,
     }];

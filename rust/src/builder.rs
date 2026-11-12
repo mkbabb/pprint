@@ -465,16 +465,59 @@ impl<'a> FmtBuilder<'a> {
     }
 
     /// A fill separator, [L] `fillSep`'s `softline` generalized to any
-    /// separator: `text (trim_end sep) <> group (flatAlt linebreak (text ws))`
-    /// where `ws` is `sep`'s trailing whitespace. The separator breaks if and
-    /// only if the next item does not fit on the line (law L5), decided at
-    /// render time at the real column, so a group in the previous item sees
-    /// the separator's own decision (L3′(c)).
+    /// separator: `text head <> FillSep k`, where `head` is `sep` without its
+    /// trailing spaces and `k` is their count. The `FillSep` op is
+    /// `group (flatAlt linebreak (text (spaces k)))`, Leijen's `softline`
+    /// for `k = 1` (ruling S8-B): it breaks if and only if the next item
+    /// does not fit on the line (law L5), decided at render time at the real
+    /// column, so a group in the previous item sees the separator's own
+    /// decision (L3′(c)).
     pub fn fill_sep(&mut self, sep: &'a str) {
-        let head = sep.trim_end();
-        let ws = &sep[head.len()..];
+        let head = sep.trim_end_matches(' ');
+        let k = (sep.len() - head.len()) as u32;
         self.str(head);
-        self.group(|b| b.if_break(|b| b.break_line(), |b| b.str(ws)));
+        self.running_width = self.running_width.saturating_add(k);
+        self.ops.push(FmtOp::FillSep { hdr: 0, spaces: k });
+    }
+
+    // ── Trivia (LW3.PP-2, law L9) ────────────────────────────────
+
+    /// A line suffix: the leaves `f` emits are held back and printed just
+    /// before the next structural newline (or at the end of the document),
+    /// and count as zero width. This is how a trailing comment stays at the
+    /// end of its line whatever the groups after it decide. `f` may emit
+    /// leaves only; a line, group, indent, `IfBreak`, fill separator or more
+    /// trivia inside it is refused at `finish()`
+    /// ([`BuildError::SuffixContent`]). An empty suffix emits nothing.
+    pub fn line_suffix<F: FnOnce(&mut Self)>(&mut self, f: F) {
+        let pos = self.ops.len();
+        self.ops.push(FmtOp::LineSuffix { len: 0 });
+        let saved_width = self.running_width;
+        f(self);
+        self.running_width = saved_width;
+        let len = self.count_since(pos + 1);
+        match self.ops.get_mut(pos) {
+            Some(FmtOp::LineSuffix { len: l }) if len > 0 => *l = len,
+            Some(FmtOp::LineSuffix { .. }) => {
+                self.ops.truncate(pos);
+            }
+            _ => self.refuse("line_suffix after a restore past its own start"),
+        }
+    }
+
+    /// If a line suffix is pending, a hard line that flushes it; otherwise
+    /// nothing (L9).
+    #[inline]
+    pub fn line_suffix_boundary(&mut self) {
+        self.ops.push(FmtOp::LineSuffixBoundary);
+    }
+
+    /// Force the enclosing group, and every group around it, to break, with
+    /// no output of its own (L2). A trailing line comment is
+    /// `line_suffix(comment)` plus `break_parent()`.
+    #[inline]
+    pub fn break_parent(&mut self) {
+        self.ops.push(FmtOp::BreakParent);
     }
 
     // ── Join ops ─────────────────────────────────────────────────

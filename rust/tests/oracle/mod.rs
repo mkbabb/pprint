@@ -26,6 +26,29 @@
 //! `width.rs`. Through LW2 it was the count of `Char`s, which agrees on the
 //! ASCII corpora of LW1 and LW2 only.
 //!
+//! Trivia (sk-v27 LW3.PP-2, law L9) extends [W] §4 `be` by one piece of
+//! state, the pending line suffixes `s`, in the manner of Prettier's
+//! `printDocToString` (`lineSuffix`, `lineSuffixBoundary`, `breakParent`),
+//! which neither paper has:
+//!
+//! ```text
+//! be w k s ((i,LineSuffix x):z)  = be w k (s ++ [(i,x)]) z        -- zero width
+//! be w k s ((i,LINE):z), s /= [] = be w k [] (s ++ [Flushed] ++ (i,LINE):z)
+//! be w k s ((i,Boundary):z)      = be w k s ((i,hardline):z)  if s /= []
+//!                                = be w k s z                 otherwise
+//! be w k s [],         s /= []   = be w k [] s
+//! ```
+//!
+//! Text laid out from a flushed suffix is `SuffixText`, which `fits` reads as
+//! zero width. `breakParent` is `flatAlt nil Fail` (it prints nothing and its
+//! flattening fails), and `group` is [P]'s: a document whose flattening can
+//! only fail is not made a union (`changesUponFlattening` = `NeverFlat`), so
+//! a group around a hard line breaks (law L2) even where a boundary would
+//! end `fits`'s first line before the `Fail`. At most one blank line: a
+//! structural newline that would make a second blank line in a row is
+//! dropped in `layout` (L9); a line feed inside a leaf (`LeafLine`) is never
+//! dropped and flushes no suffix.
+//!
 //! The implementation is deliberately the naive, lazy one: `be` is an
 //! iterator over a persistent work list, and `better` clones that iterator to
 //! ask `fits` about the first line of one alternative. That is exactly the
@@ -69,6 +92,18 @@ pub enum Doc {
     Nesting(Rc<dyn Fn(isize) -> D>),
     /// [P] `Fail`: the flattening of a hard line. Never laid out.
     Fail,
+    /// L9: a line suffix, laid out just before the next structural newline.
+    /// `flatten (LineSuffix x) = LineSuffix x` (its content is leaves).
+    LineSuffix(D),
+    /// L9: a hard line if a suffix is pending, else nothing.
+    /// `flatten Boundary = Boundary`.
+    Boundary,
+    /// A line feed inside a leaf: a newline at the current nesting (the
+    /// lowering nests it to column 0) that flushes no suffix and that the
+    /// blank-line policy never drops.
+    LeafLine,
+    /// Internal: the end of a flushed suffix in the work list.
+    Flushed,
 }
 
 pub type D = Rc<Doc>;
@@ -131,9 +166,48 @@ pub fn nesting(f: impl Fn(isize) -> D + 'static) -> D {
     Rc::new(Doc::Nesting(Rc::new(f)))
 }
 
-/// [W] §3 `group x = flatten x :<|> x`.
+/// [W] §3 `group x = flatten x :<|> x`, as [P] defines it: `group x = x`
+/// when `x`'s flattening can only fail ([P] `changesUponFlattening x =
+/// NeverFlat`), since no `fits` ever admits it.
 pub fn group(x: D) -> D {
-    Rc::new(Doc::Union(flatten(&x), x))
+    let f = flatten(&x);
+    if never_flat(&f) {
+        x
+    } else {
+        Rc::new(Doc::Union(f, x))
+    }
+}
+
+/// [P] `changesUponFlattening`'s `NeverFlat` case, on a flattened document:
+/// a `Fail` that layout would reach (not inside a function of the column or
+/// nesting, which [P] does not look into, and not inside a line suffix,
+/// whose content is laid out outside the flattening).
+pub fn never_flat(x: &D) -> bool {
+    match &**x {
+        Doc::Fail => true,
+        Doc::Cat(a, b) => never_flat(a) || never_flat(b),
+        Doc::Nest(_, a) => never_flat(a),
+        Doc::Union(a, _) => never_flat(a),
+        Doc::FlatAlt(a, _) => never_flat(a),
+        _ => false,
+    }
+}
+
+/// L9 `lineSuffix x`.
+pub fn line_suffix(x: D) -> D {
+    Rc::new(Doc::LineSuffix(x))
+}
+
+/// L9 `lineSuffixBoundary`.
+pub fn boundary() -> D {
+    Rc::new(Doc::Boundary)
+}
+
+/// Prettier's `breakParent`, as [P] constructs: `flatAlt nil Fail` prints
+/// nothing, and its flattening fails, so every enclosing `group` is
+/// `NeverFlat` (law L2), except across a `flatAlt`'s first branch.
+pub fn break_parent() -> D {
+    flat_alt(nil(), Rc::new(Doc::Fail))
 }
 
 /// [W] §3, the six `flatten` equations, plus [L] and [P] for the extensions:
@@ -171,6 +245,9 @@ pub fn flatten(x: &D) -> D {
         Doc::FlatAlt(_, b) => flatten(b),
         Doc::HardLine => Rc::new(Doc::Fail),
         Doc::Fail => x.clone(),
+        Doc::LineSuffix(_) | Doc::Boundary | Doc::Flushed => x.clone(),
+        // A leaf's line feed is never flat ([P] `flatten hardline = Fail`).
+        Doc::LeafLine => Rc::new(Doc::Fail),
     }
 }
 
@@ -255,10 +332,15 @@ pub fn softline() -> D {
 }
 
 /// A line feed inside a leaf: a hard line at column 0, whatever the nesting,
-/// [L] `nesting (\i -> nest (-i) hardline)`. Its flattening fails ([P]
-/// `flatten hardline = Fail`), so a group holding it breaks.
+/// [L] `nesting (\i -> nest (-i) hardline)`, with the leaf's own line
+/// (`LeafLine`, which flushes no suffix and is never dropped). Its
+/// flattening fails ([P] `flatten hardline = Fail`), so a group holding it
+/// breaks; the `flatAlt _ Fail` makes that visible to [P] `group`.
 pub fn leaf_newline() -> D {
-    nesting(|i| nest(-i, hardline()))
+    flat_alt(
+        nesting(|i| nest(-i, Rc::new(Doc::LeafLine))),
+        Rc::new(Doc::Fail),
+    )
 }
 
 /// A leaf that may hold line feeds: its lines as `text`, joined by
@@ -350,6 +432,10 @@ pub enum SItem {
     Text(Rc<str>),
     Line(isize),
     Fail,
+    /// Text laid out from a flushed line suffix: zero width for `fits`.
+    SuffixText(Rc<str>),
+    /// A line feed inside a leaf (exempt from the blank-line policy).
+    LeafLine(isize),
 }
 
 /// [W] §4 the work list `[(Int, DOC)]`, as a persistent cons list so that
@@ -367,6 +453,10 @@ pub struct Be {
     w: isize,
     k: isize,
     z: Rc<List>,
+    /// L9: the pending suffixes, most recent first.
+    s: Rc<List>,
+    /// Inside a flushed suffix: text is `SuffixText`.
+    flushing: bool,
 }
 
 impl Be {
@@ -376,7 +466,33 @@ impl Be {
             w,
             k,
             z: Rc::new(List::Cons(0, x, Rc::new(List::Nil))),
+            s: Rc::new(List::Nil),
+            flushing: false,
         }
+    }
+
+    /// L9: move the pending suffixes, oldest first, onto the work list in
+    /// front of what is there, ending in a `Flushed` marker.
+    fn flush(&mut self) {
+        let mut items = Vec::new();
+        let mut cur = self.s.clone();
+        while let List::Cons(i, x, rest) = &*cur {
+            items.push((*i, x.clone()));
+            let next = rest.clone();
+            cur = next;
+        }
+        self.s = Rc::new(List::Nil);
+        self.push(0, Rc::new(Doc::Flushed));
+        // `items` is most recent first; pushing in that order leaves the
+        // oldest on top.
+        for (i, x) in items {
+            self.push(i, x);
+        }
+        self.flushing = true;
+    }
+
+    fn pending(&self) -> bool {
+        matches!(&*self.s, List::Cons(..))
     }
 
     fn push(&mut self, i: isize, x: D) {
@@ -407,7 +523,14 @@ impl Iterator for Be {
     fn next(&mut self) -> Option<SItem> {
         loop {
             let (i, x, z) = match &*self.z {
-                List::Nil => return None,
+                List::Nil => {
+                    // L9: suffixes still pending at the end are laid out.
+                    if self.pending() {
+                        self.flush();
+                        continue;
+                    }
+                    return None;
+                }
                 List::Cons(i, x, z) => (*i, x.clone(), z.clone()),
             };
             self.z = z;
@@ -420,12 +543,35 @@ impl Iterator for Be {
                 Doc::Nest(j, a) => self.push(i + j, a.clone()),
                 Doc::Text(s) => {
                     self.k += length(s);
-                    return Some(SItem::Text(s.clone()));
+                    return Some(if self.flushing {
+                        SItem::SuffixText(s.clone())
+                    } else {
+                        SItem::Text(s.clone())
+                    });
                 }
                 Doc::Line | Doc::LineBreak | Doc::HardLine => {
+                    // L9: the pending suffixes go first.
+                    if self.pending() {
+                        self.push(i, x.clone());
+                        self.flush();
+                        continue;
+                    }
                     self.k = i;
                     return Some(SItem::Line(i));
                 }
+                Doc::LeafLine => {
+                    self.k = i;
+                    return Some(SItem::LeafLine(i));
+                }
+                Doc::LineSuffix(a) => {
+                    self.s = Rc::new(List::Cons(i, a.clone(), self.s.clone()));
+                }
+                Doc::Boundary => {
+                    if self.pending() {
+                        self.push(i, hardline());
+                    }
+                }
+                Doc::Flushed => self.flushing = false,
                 Doc::Union(a, b) => {
                     let mut left = self.clone();
                     left.push(i, a.clone());
@@ -469,7 +615,9 @@ pub fn fits(mut w: isize, mut x: Be) -> bool {
         match x.next() {
             None => return true,
             Some(SItem::Text(s)) => w -= length(&s),
-            Some(SItem::Line(_)) => return true,
+            // L9: suffix content is zero width.
+            Some(SItem::SuffixText(_)) => {}
+            Some(SItem::Line(_)) | Some(SItem::LeafLine(_)) => return true,
             Some(SItem::Fail) => return false,
         }
     }
@@ -489,8 +637,20 @@ pub fn layout(x: Be) -> Result<String, &'static str> {
     let mut out = String::new();
     for item in x {
         match item {
-            SItem::Text(s) => out.push_str(&s),
+            SItem::Text(s) | SItem::SuffixText(s) => out.push_str(&s),
             SItem::Line(i) => {
+                // pprint's convention (trailing spaces go before a newline)
+                // and L9's blank-line policy: a newline that would make a
+                // second blank line in a row is dropped; its indentation
+                // stays.
+                let keep = out.trim_end_matches([' ', '\t']).len();
+                out.truncate(keep);
+                if !(out.ends_with("\n\n") || out == "\n") {
+                    out.push('\n');
+                }
+                out.extend(std::iter::repeat_n(' ', i.max(0) as usize));
+            }
+            SItem::LeafLine(i) => {
                 out.push('\n');
                 out.extend(std::iter::repeat_n(' ', i.max(0) as usize));
             }
