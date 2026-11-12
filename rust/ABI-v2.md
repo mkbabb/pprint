@@ -63,3 +63,24 @@ PROVISIONAL for consumers (delegate ruling A-8). bbnf-lang and parse-that still 
 ## Addendum, 2026-11-11: the version line (LW2.TOPO-4d, RULINGS 2026-11-11b TOPO-4-A2)
 
 The layout is unchanged: `src/op.rs` is byte-identical and its sha256 in `ABI-v2.sha256` is the same. Only the version line this record names moves. TOPO-4-A2 publishes `pprint` 0.4.0 from the 0.3-API tree the consumers pin (pprint `lw2/topo-4d-0.4` `6011442`, the content of `fe7e9ca`), because that tree breaks the API of 0.3.6. ABI v2 breaks the API of that 0.4.0 (the five items S13-G2 named: `finish`, `mediumline`, `linear_join`, `render`, `render_with_hint`), so under the same ruling its line is the next minor after 0.4.0: the crate is `0.5.0-alpha.0` from this addendum on, and a consumer edge onto ABI v2 says `version = "0.5.0-alpha.0"`. `0.4.0-alpha.0` is retired unpublished. Where the text above says "the 0.4 version line" or `0.4.0-alpha.0` for ABI v2, read the 0.5 line and `0.5.0-alpha.0`; PP-U9 re-pins the consumers onto the 0.5 line. `ABI-v2.sha256` is re-taken for this file.
+
+## Addendum, 2026-11-12: `AsciiByte` (LW3.PP-1a, under ruling A-8)
+
+The byte fields of the op stream take an ASCII-only type. Every other layout fact above stands, and the size asserts are kept: `FmtOp<'a>` is still ≤ 24 bytes with alignment 8, and `GroupHdr` is still 16 bytes.
+
+`AsciiByte` (`src/op.rs`) is a `#[repr(transparent)]` newtype over `u8` whose constructor `AsciiByte::new(b) -> Option<AsciiByte>` admits only printable ASCII, `0x20..=0x7E` (`const _: () = assert!(size_of::<AsciiByte>() == 1)`). Such a byte is valid UTF-8 on its own and is exactly one display column. It replaces `u8` in four places:
+
+| Variant | v2 | v2 + LW3 addendum | Bytes |
+|---|---|---|---|
+| `Char` | `Char(u8)` | `Char(AsciiByte)` | 1 |
+| `WrapStart` | `{ open: u8, hdr: u32 }` | `{ open: AsciiByte, hdr: u32 }` | 5 |
+| `WrapEnd` | `{ close: u8 }` | `{ close: AsciiByte }` | 1 |
+| `Sep` | `{ flat: [u8; 8], flat_len: u8, brk: [u8; 4], brk_len: u8 }` | `{ flat: [AsciiByte; 8], flat_len: u8, brk: [AsciiByte; 4], brk_len: u8 }` | 14 |
+
+The builder keeps its byte-taking signatures (`char(u8)`, `wrap(u8, u8, f)`, `sep(&str, &str)`). A byte with no `AsciiByte` (a non-ASCII byte, a tab, a line feed or another control byte) is refused at build: `finish()` returns `BuildError::NotAscii { pc, byte }`. A tab in a text leaf (`text`, `str`, `text_owned`, `quoted_text`, `text_inline_ws`) returns `BuildError::Tab { pc }`, since its display width depends on tab stops the renderer does not have. A `sep` longer than its op holds returns `BuildError::SepTooLong { pc }` (it panicked in release before). These are three new `BuildError` variants.
+
+With every byte typed, the renderer builds its output `String` from `&str` and `AsciiByte` pushes only. `from_utf8_unchecked` is deleted, and `src/lib.rs` carries `#![forbid(unsafe_code)]`, so the crate has no unsafe code and cannot gain any without a compile error.
+
+The renderer is one loop: an `IfBreak` pushes (branch end, resume) on an explicit stack instead of recursing, and the group mode stack is a growable bit vector, so a group past depth 64 reads its true mode (v2's u64 stack read every such group as broken). Neither changes the layout.
+
+`ABI-v2.sha256` is re-taken for `src/op.rs` and this file.

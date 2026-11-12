@@ -23,8 +23,10 @@ pub enum FmtOp<'a> {
     /// `Char('"') + Text(s) + Char('"')` — single op, single match dispatch.
     QuotedText(&'a str),
 
-    /// Emit a single ASCII byte (delimiters, operators, commas).
-    Char(u8),
+    /// Emit a single printable ASCII byte (delimiters, operators, commas).
+    /// The payload is an [`AsciiByte`], so the byte is valid UTF-8 and one
+    /// display column by construction (LW3.PP-1a).
+    Char(AsciiByte),
 
     // ── Numeric ops (rendered inline by the renderer) ───────────────
     /// Signed 64-bit integer. Covers i8, i16, i32, isize via widening.
@@ -69,11 +71,11 @@ pub enum FmtOp<'a> {
     /// Begin a wrapped container: group + open delimiter + indent + break_line.
     /// Combines GroupStart + Char(open) + IndentStart + BreakLine into one op.
     /// `hdr` is as for `GroupStart`; the flat width counts both delimiters.
-    WrapStart { open: u8, hdr: u32 },
+    WrapStart { open: AsciiByte, hdr: u32 },
 
     /// End a wrapped container: indent_end + break_line + close char + group_end.
     /// Combines IndentEnd + BreakLine + Char(close) + GroupEnd into one op.
-    WrapEnd { close: u8 },
+    WrapEnd { close: AsciiByte },
 
     /// Unconditional line break. Always emits newline + indent.
     Hardline,
@@ -91,9 +93,9 @@ pub enum FmtOp<'a> {
     /// Separator: in break mode emit `brk` bytes + newline + indent;
     /// in flat mode emit `flat` bytes. For non-comma separators.
     Sep {
-        flat: [u8; 8],
+        flat: [AsciiByte; 8],
         flat_len: u8,
-        brk: [u8; 4],
+        brk: [AsciiByte; 4],
         brk_len: u8,
     },
 
@@ -102,6 +104,61 @@ pub enum FmtOp<'a> {
     /// `flat_count` (law L6). Counts are u32 (ABI v2).
     IfBreak { break_count: u32, flat_count: u32 },
 }
+
+/// A printable ASCII byte, `0x20..=0x7E` (sk-v27 LW3.PP-1a, `ABI-v2.md`
+/// LW3 addendum). The type of every byte the op stream carries outside a
+/// `&str`: `Char`, the delimiters of `WrapStart`/`WrapEnd` and the bytes of
+/// `Sep`.
+///
+/// It is valid UTF-8 on its own, so the renderer builds its output `String`
+/// from `&str` and `AsciiByte` pushes with no unchecked conversion, and it is
+/// exactly one display column, so a width is never a guess. A non-ASCII byte,
+/// a tab, a line feed or any other control byte has no `AsciiByte`: the
+/// builder refuses it at `finish()` ([`BuildError::NotAscii`]).
+///
+/// [`BuildError::NotAscii`]: crate::BuildError::NotAscii
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
+pub struct AsciiByte(u8);
+
+impl AsciiByte {
+    /// The space, `0x20`.
+    pub const SPACE: AsciiByte = AsciiByte(b' ');
+
+    /// `Some` iff `b` is printable ASCII (`0x20..=0x7E`).
+    #[inline]
+    pub const fn new(b: u8) -> Option<AsciiByte> {
+        if b >= 0x20 && b <= 0x7E {
+            Some(AsciiByte(b))
+        } else {
+            None
+        }
+    }
+
+    /// The byte.
+    #[inline(always)]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
+    /// The byte as a `char` (always a one-byte, one-column scalar).
+    #[inline(always)]
+    pub const fn as_char(self) -> char {
+        self.0 as char
+    }
+}
+
+impl TryFrom<u8> for AsciiByte {
+    type Error = u8;
+
+    /// The byte itself is the error when it is not printable ASCII.
+    #[inline]
+    fn try_from(b: u8) -> Result<Self, u8> {
+        AsciiByte::new(b).ok_or(b)
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<AsciiByte>() == 1);
 
 /// ABI v2's size bound. The 24-byte budget is part of the frozen layout
 /// (`rust/ABI-v2.md`): a variant that grows the enum is a compile error here.

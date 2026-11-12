@@ -10,7 +10,7 @@
 //! newline. Inside a group, the group's own `[W] §3 group` union decides.
 
 use super::*;
-use pprint::{FmtOp, Printer};
+use pprint::{AsciiByte, FmtOp, Printer};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LowerError {
@@ -29,7 +29,7 @@ enum Frame {
     Root,
     Group,
     Indent,
-    Wrap { open: u8, close_seen: bool },
+    Wrap { open: AsciiByte, close_seen: bool },
 }
 
 struct Level {
@@ -44,10 +44,10 @@ fn seq(parts: Vec<D>) -> D {
     })
 }
 
-fn byte_text(bytes: &[u8]) -> D {
-    // Sep / Wrap / Char bytes are ASCII in every v1 producer; a non-ASCII
-    // byte is the PP-U1 soundness hole, rendered here lossily on purpose.
-    text(&String::from_utf8_lossy(bytes))
+fn byte_text(bytes: &[AsciiByte]) -> D {
+    // Sep / Wrap / Char bytes are `AsciiByte`s (LW3.PP-1a): printable ASCII,
+    // one `Char` each in [W]'s `length`.
+    text(&bytes.iter().map(|b| b.as_char()).collect::<String>())
 }
 
 /// Lower a v1 op stream to an oracle document under `printer`.

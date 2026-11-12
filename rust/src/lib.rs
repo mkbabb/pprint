@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 // ── FmtOp flat buffer system ────────────────────────────────────────────────
 pub mod builder;
 mod layout;
@@ -6,7 +8,7 @@ pub mod render;
 
 pub use builder::FmtBuilder;
 pub use layout::BuildError;
-pub use op::{Doc, FmtOp, GroupHdr};
+pub use op::{AsciiByte, Doc, FmtOp, GroupHdr};
 pub use render::{PRINTER, Printer, render, render_with_hint};
 
 // ── Pretty trait + standard type impls ──────────────────────────────────────

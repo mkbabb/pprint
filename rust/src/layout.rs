@@ -56,6 +56,16 @@ pub enum BuildError {
     Unbalanced { pc: u32, reason: &'static str },
     /// The stream has more than `u32::MAX - 1` ops (ABI v2 indexes are u32).
     TooLong,
+    /// A byte the op stream carries as an [`AsciiByte`](crate::AsciiByte)
+    /// (`char`, `wrap`'s delimiters, `sep`'s bytes) is not printable ASCII:
+    /// a non-ASCII byte, a tab, a line feed or another control byte
+    /// (LW3.PP-1a).
+    NotAscii { pc: u32, byte: u8 },
+    /// A text leaf holds a tab, whose display width depends on tab stops the
+    /// renderer does not have (LW3.PP-1a).
+    Tab { pc: u32 },
+    /// A `sep` longer than its op holds (8 flat bytes, 4 break bytes).
+    SepTooLong { pc: u32 },
 }
 
 impl std::fmt::Display for BuildError {
@@ -65,6 +75,15 @@ impl std::fmt::Display for BuildError {
                 write!(f, "unbalanced op stream at op {pc}: {reason}")
             }
             BuildError::TooLong => write!(f, "op stream longer than u32::MAX - 1 ops"),
+            BuildError::NotAscii { pc, byte } => write!(
+                f,
+                "op {pc}: byte {byte:#04x} is not printable ASCII (an AsciiByte is 0x20..=0x7E)"
+            ),
+            BuildError::Tab { pc } => write!(f, "op {pc}: a tab in a text leaf"),
+            BuildError::SepTooLong { pc } => write!(
+                f,
+                "op {pc}: a sep longer than 8 flat bytes or 4 break bytes"
+            ),
         }
     }
 }
