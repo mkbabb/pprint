@@ -5,6 +5,7 @@ pub mod builder;
 mod layout;
 pub mod op;
 pub mod render;
+pub mod width;
 
 pub use builder::FmtBuilder;
 pub use layout::BuildError;

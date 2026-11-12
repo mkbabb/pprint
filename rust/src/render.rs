@@ -1,4 +1,5 @@
 use crate::op::{AsciiByte, Doc, FmtOp, GroupHdr};
+use crate::width;
 
 /// Printer configuration.
 #[derive(Debug, Clone, Copy)]
@@ -160,8 +161,32 @@ impl RenderState {
                 > self.max_width as u64
     }
 
+    /// Emit a text leaf, counting display columns (LW3.PP-1b). Each line
+    /// feed inside the leaf is a newline at column 0: trailing spaces before
+    /// it are removed, as before every newline, and no indentation follows
+    /// it. The column after the leaf is its last line's width.
     #[inline(always)]
     fn text(&mut self, s: &str) {
+        if !s.as_bytes().contains(&b'\n') {
+            self.output.push_str(s);
+            self.current_line_len += width::columns(s);
+            return;
+        }
+        for (i, line) in s.split('\n').enumerate() {
+            if i > 0 {
+                self.trim_trailing();
+                self.output.push('\n');
+                self.current_line_len = 0;
+            }
+            self.output.push_str(line);
+            self.current_line_len += width::columns(line);
+        }
+    }
+
+    /// An ASCII-only string (numbers, fixed separators): one column a byte.
+    #[inline(always)]
+    fn ascii_str(&mut self, s: &str) {
+        debug_assert!(s.is_ascii());
         self.output.push_str(s);
         self.current_line_len += s.len();
     }
@@ -230,9 +255,10 @@ impl RenderState {
                 FmtOp::OwnedText(ref s) => self.text(s),
                 FmtOp::QuotedText(s) => {
                     self.output.push('"');
-                    self.output.push_str(s);
+                    self.current_line_len += 1;
+                    self.text(s);
                     self.output.push('"');
-                    self.current_line_len += s.len() + 2;
+                    self.current_line_len += 1;
                 }
                 FmtOp::Char(c) => self.ascii(c),
 
@@ -306,7 +332,7 @@ impl RenderState {
                         self.current_line_len += 1;
                         self.newline();
                     } else {
-                        self.text(", ");
+                        self.ascii_str(", ");
                     }
                 }
                 FmtOp::Sep {
@@ -354,5 +380,5 @@ fn emit_int<T: itoap::Integer>(value: T, state: &mut RenderState) {
 #[inline(always)]
 fn emit_f64(value: f64, state: &mut RenderState) {
     let mut buf = ryu::Buffer::new();
-    state.text(buf.format_finite(value));
+    state.ascii_str(buf.format_finite(value));
 }

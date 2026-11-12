@@ -30,6 +30,7 @@
 //! ```text
 //! F(end)            = 0                               -- fits w Nil = True
 //! F(leaf)           = width(leaf) + F(next)            -- fits (w - length s) x
+//! F(multi-line leaf) = width(its first line)          -- its newline is a Line
 //! F(line op)        = width before its newline         -- fits w (i `Line` x) = True
 //! F(GroupStart H)   = min(flat(H) + F(after H), F(first child))
 //!                     (flat side = infinity when H is HAS_HARD: fits _ SFail = False)
@@ -48,6 +49,7 @@
 
 use crate::DigitCount;
 use crate::op::{Doc, FmtOp, GroupHdr};
+use crate::width;
 
 /// A stream the builder refuses (law L8).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,14 +106,15 @@ enum Frame {
     },
 }
 
-/// The display width of one leaf op (byte length; display columns are
-/// LW3.PP-1's `width.rs`). Line and structural ops are 0 here.
+/// The display width of one single-line leaf op, in columns (`width.rs`,
+/// LW3.PP-1b). A text leaf's width is its first line's; [`multiline`] says
+/// whether the leaf has more. Line and structural ops are 0 here.
 #[inline]
 pub(crate) fn leaf_width(ops: &[FmtOp<'_>], p: usize) -> u64 {
     match &ops[p] {
-        FmtOp::Text(s) => s.len() as u64,
-        FmtOp::OwnedText(s) => s.len() as u64,
-        FmtOp::QuotedText(s) => s.len() as u64 + 2,
+        FmtOp::Text(s) => width::leaf(s).first as u64,
+        FmtOp::OwnedText(s) => width::leaf(s).first as u64,
+        FmtOp::QuotedText(s) => width::quoted(s).first as u64,
         FmtOp::Char(_) => 1,
         FmtOp::I64(v) => v.len() as u64,
         FmtOp::U64(v) => v.len() as u64,
@@ -125,6 +128,18 @@ pub(crate) fn leaf_width(ops: &[FmtOp<'_>], p: usize) -> u64 {
         },
         FmtOp::F64(v) => f64_width(*v) as u64,
         _ => 0,
+    }
+}
+
+/// A text leaf that holds a line feed: its flattening holds a hard line, so
+/// it sets `HAS_HARD` (L2), and the rest a preceding group reads stops at its
+/// first line (L3′).
+#[inline]
+pub(crate) fn multiline(op: &FmtOp<'_>) -> bool {
+    match op {
+        FmtOp::Text(s) | FmtOp::QuotedText(s) => s.as_bytes().contains(&b'\n'),
+        FmtOp::OwnedText(s) => s.as_bytes().contains(&b'\n'),
+        _ => false,
     }
 }
 
@@ -229,7 +244,8 @@ pub(crate) fn compile(mut ops: Vec<FmtOp<'_>>) -> Result<Doc<'_>, BuildError> {
                 Some(Frame::Indent) => {}
                 _ => return unbalanced(pc, "IndentEnd with no matching IndentStart"),
             },
-            FmtOp::Hardline => {
+            // A hard line, or a text leaf with one inside it (LW3.PP-1b).
+            _ if matches!(ops[pc], FmtOp::Hardline) || multiline(&ops[pc]) => {
                 if let Some(&(g, d)) = open.last()
                     && d == brk_depth
                 {
@@ -301,6 +317,13 @@ pub(crate) fn compile(mut ops: Vec<FmtOp<'_>>) -> Result<Doc<'_>, BuildError> {
         let at_root = root[p];
         let next = || chase(p + 1);
         f[p] = match &ops[p] {
+            // A multi-line leaf: `fits` reads its first line, then stops at
+            // its newline ([W] §4 `fits w (i `Line` x) = True`).
+            FmtOp::Text(_) | FmtOp::OwnedText(_) | FmtOp::QuotedText(_)
+                if multiline(&ops[p]) =>
+            {
+                leaf_width(&ops, p)
+            }
             FmtOp::Text(_)
             | FmtOp::OwnedText(_)
             | FmtOp::QuotedText(_)

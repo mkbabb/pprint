@@ -1,6 +1,7 @@
 use crate::layout::{BuildError, compile, f64_width};
 use crate::op::{AsciiByte, Doc, FmtOp};
 use crate::utils::text_justify;
+use crate::width;
 
 /// Flat-buffer formatting builder. Constructs a [`Doc`]: the `FmtOp` stream
 /// plus its [`GroupHdr`](crate::GroupHdr) table, which `finish()` computes.
@@ -77,6 +78,15 @@ impl<'a> FmtBuilder<'a> {
         self.ops.len().min(u32::MAX as usize) as u32
     }
 
+    /// Add a leaf's display width (LW3.PP-1b) to the running flat width. A
+    /// multi-line leaf adds its last line: its group is `HAS_HARD`, so the
+    /// flat width it lands in is never read for a decision.
+    #[inline]
+    fn add_width(&mut self, w: usize) {
+        let w = u32::try_from(w).unwrap_or(u32::MAX);
+        self.running_width = self.running_width.saturating_add(w);
+    }
+
     /// The `AsciiByte` for `b`, or a recorded refusal (LW3.PP-1a).
     fn ascii(&mut self, b: u8) -> AsciiByte {
         match AsciiByte::new(b) {
@@ -144,7 +154,7 @@ impl<'a> FmtBuilder<'a> {
         if s.is_empty() || !self.tab_free(s) {
             return;
         }
-        self.running_width = self.running_width.saturating_add(s.len() as u32);
+        self.add_width(width::leaf(s).last);
         self.ops.push(FmtOp::Text(s));
     }
 
@@ -164,11 +174,8 @@ impl<'a> FmtBuilder<'a> {
         if !self.tab_free(s) {
             return;
         }
-        // +2 for the quotes.
-        self.running_width = self
-            .running_width
-            .saturating_add(s.len() as u32)
-            .saturating_add(2);
+        // The quotes are counted by `width::quoted`.
+        self.add_width(width::quoted(s).last);
         self.ops.push(FmtOp::QuotedText(s));
     }
 
@@ -179,7 +186,7 @@ impl<'a> FmtBuilder<'a> {
         if s.is_empty() || !self.tab_free(s) {
             return;
         }
-        self.running_width = self.running_width.saturating_add(s.len() as u32);
+        self.add_width(width::leaf(s).last);
         self.ops.push(FmtOp::OwnedText(s.to_string()));
     }
 
@@ -189,7 +196,7 @@ impl<'a> FmtBuilder<'a> {
     #[inline]
     pub fn text_inline_ws(&mut self, s: &'a str) {
         if !s.is_empty() && !s.as_bytes().contains(&b'\n') && self.tab_free(s) {
-            self.running_width = self.running_width.saturating_add(s.len() as u32);
+            self.add_width(width::columns(s));
             self.ops.push(FmtOp::Text(s));
         }
     }
@@ -201,7 +208,7 @@ impl<'a> FmtBuilder<'a> {
         if s.is_empty() || !self.tab_free(s) {
             return;
         }
-        self.running_width = self.running_width.saturating_add(s.len() as u32);
+        self.add_width(width::leaf(s).last);
         self.ops.push(FmtOp::Text(s));
     }
 

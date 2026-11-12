@@ -148,6 +148,7 @@ dependencies = [
  "rand",
  "regex",
  "ryu",
+ "unicode-width",
 ]
 
 [[package]]
